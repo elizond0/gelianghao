@@ -76,7 +76,8 @@
   window.__debug = {
     state: function () { return JSON.parse(JSON.stringify(state)); },
     pull: function () { return adapter ? adapter.pullState() : Promise.resolve(null); },
-    adapter: function () { return adapter; }
+    adapter: function () { return adapter; },
+    game: function () { return game; }   // 只读出口：自动化测试/控制台排障用
   };
 
   var $ = function (id) { return document.getElementById(id); };
