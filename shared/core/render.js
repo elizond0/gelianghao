@@ -11,6 +11,17 @@
     root.GLHCore = Core;
   }
   var CFG = (Core || {}).CFG;
+  var THEMES = (Core || {}).THEMES || [];
+
+  // 各档位配色（和 core 的 LEVELS/THEMES 一一对应：山脚→针叶林→碎石坡→雪线→暴风雪山顶）
+  var THEME_COL = [
+    { skyTop: '#bfe7ff', skyBottom: '#ffeccf', hillFar: '#a7d8c3', hillNear: '#7cc7a5', grass: '#63b96b', grassLight: '#8ed77b', dirt: '#8a5a3b' },
+    { skyTop: '#aee2f5', skyBottom: '#ffe4c4', hillFar: '#8fc7ae', hillNear: '#63b58c', grass: '#4fa85e', grassLight: '#7cc86e', dirt: '#7d5138' },
+    { skyTop: '#a4d4e8', skyBottom: '#e8d8c8', hillFar: '#a9a29a', hillNear: '#8a8378', grass: '#9b937f', grassLight: '#b5ac93', dirt: '#6f5643' },
+    { skyTop: '#8fb8d8', skyBottom: '#d8e4ee', hillFar: '#b8c4cf', hillNear: '#93a3b3', grass: '#dfe8ef', grassLight: '#f4f9fc', dirt: '#5f6b78' },
+    { skyTop: '#6d8fb3', skyBottom: '#c2d2e2', hillFar: '#93a5bb', hillNear: '#6e8299', grass: '#eef4fa', grassLight: '#ffffff', dirt: '#4e5a68' }
+  ];
+  function themeMix(i) { return THEME_COL[Math.max(0, Math.min(THEME_COL.length - 1, i))]; }
 
   var COL = {
     skyTop: '#bfe7ff',
@@ -38,6 +49,10 @@
     this.opts = opts || {};
     this.t = 0;
     this.clouds = [];
+    this.snow = [];
+    for (var i = 0; i < 60; i++) {
+      this.snow.push({ x: Math.random() * 400, y: Math.random() * 700, r: 1 + Math.random() * 2.2, sp: 22 + Math.random() * 40, drift: Math.random() * 6.28 });
+    }
     for (var i = 0; i < 7; i++) {
       this.clouds.push({ x: i * 240 + Math.random() * 120, y: 40 + Math.random() * 130, s: 0.6 + Math.random() * 0.7, sp: 4 + Math.random() * 8 });
     }
@@ -58,18 +73,27 @@
     }
 
     ctx.save();
-    // ---------- 天空 ----------
+    // ---------- 天空（按所在山体档位换配色：越往上越冷、越接近山顶越昏暗）----------
+    // 主题下标：中心视线落在第几档地形（LEVELS[i].until 是该档右边界）
+    var ti = 0;
+    var midX = g.camX + W / 2;
+    var lvlArr = Core.LEVELS || [];
+    for (var li = 0; li < lvlArr.length; li++) {
+      if (midX >= lvlArr[li].until) ti = Math.min(li + 1, lvlArr.length - 1);
+    }
+    var TC = themeMix(ti);
     var sky = ctx.createLinearGradient ? ctx.createLinearGradient(0, 0, 0, H) : null;
     if (sky) {
-      sky.addColorStop(0, COL.skyTop);
-      sky.addColorStop(1, COL.skyBottom);
+      sky.addColorStop(0, TC.skyTop);
+      sky.addColorStop(1, TC.skyBottom);
       ctx.fillStyle = sky;
     } else {
-      ctx.fillStyle = COL.skyTop;
+      ctx.fillStyle = TC.skyTop;
     }
     ctx.fillRect(0, 0, W, H);
 
-    // 太阳
+    // 太阳（山顶档位被云遮住，画淡些）
+    ctx.globalAlpha = ti >= 4 ? 0.35 : 1;
     ctx.fillStyle = COL.sun;
     circle(ctx, 300, 92, 34);
     ctx.globalAlpha = 0.25;
@@ -85,8 +109,12 @@
     }
 
     // 远山（视差）
-    this._hills(g.camX * 0.25, 300, COL.hillFar, 120);
-    this._hills(g.camX * 0.45 + 90, 350, COL.hillNear, 100);
+    this._hills(g.camX * 0.25, 300, TC.hillFar, 120);
+    this._hills(g.camX * 0.45 + 90, 350, TC.hillNear, 100);
+
+    // 飘雪（雪线以上才下；屏幕空间粒子，不进世界坐标）
+    var snowAmt = THEMES[ti] ? THEMES[ti].snow : 0;
+    if (snowAmt > 0) this._snow(g, t, snowAmt);
 
     // ---------- 世界 ----------
     ctx.save();
@@ -131,6 +159,28 @@
     ctx.fill();
   };
 
+  // 飘雪：屏幕空间循环下落 + 随风漂移（山顶暴风雪里风是把猴子吹走的元凶，雪跟着一起飘才像）
+  Renderer.prototype._snow = function (g, t, amt) {
+    var ctx = this.ctx;
+    var windAll = 0;
+    for (var i = 0; i < (g.winds || []).length; i++) {
+      var w = g.winds[i];
+      if (g.camX + CFG.W / 2 >= w.x0 && g.camX + CFG.W / 2 <= w.x1) windAll = w.fx;
+    }
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    var n = Math.round(this.snow.length * amt);
+    for (var j = 0; j < n; j++) {
+      var f = this.snow[j];
+      var sy = (f.y + t * f.sp) % (CFG.H + 40) - 20;
+      var sx = (f.x + t * (8 + f.r * 4) + windAll * 0.12 + Math.sin(t + f.drift) * 8) % (CFG.W + 40);
+      if (sx < 0) sx += CFG.W + 40;
+      ctx.globalAlpha = 0.4 + 0.5 * (f.r / 3.2);
+      circle(ctx, sx - 20, sy - 20, f.r);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  };
+
   Renderer.prototype._water = function (g, t) {
     var ctx = this.ctx;
     var left = g.camX - 40, right = g.camX + CFG.W + 40;
@@ -165,7 +215,58 @@
       var p = g.platforms[i];
       if (p.x + p.w < left || p.x > right) continue;
       var bottom = CFG.H + 240;
-      if (p.type === 'ice') {
+      if (p.type === 'spring') {
+        // 弹跳蘑菇：红伞白点 + 白杆，一眼"踩我"
+        ctx.fillStyle = '#f1e8d8';
+        ctx.fillRect(p.x + p.w / 2 - 7, p.y - 12, 14, bottom - p.y);
+        ctx.fillStyle = '#e0524d';
+        ctx.beginPath();
+        ctx.moveTo(p.x + 2, p.y);
+        ctx.quadraticCurveTo(p.x + p.w / 2, p.y - 26, p.x + p.w - 2, p.y);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        circle(ctx, p.x + p.w * 0.32, p.y - 10, 3.4);
+        ctx.fill();
+        circle(ctx, p.x + p.w * 0.62, p.y - 14, 2.6);
+        ctx.fill();
+        circle(ctx, p.x + p.w * 0.5, p.y - 5, 2.2);
+        ctx.fill();
+        // 弹跳预兆：伞面呼吸
+        ctx.globalAlpha = 0.35 + 0.2 * Math.sin(t * 5 + p.x);
+        ctx.strokeStyle = '#ffd8d6';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(p.x + 2, p.y);
+        ctx.quadraticCurveTo(p.x + p.w / 2, p.y - 26, p.x + p.w - 2, p.y);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      } else if (p.type === 'float') {
+        // 移动浮台：木板 + 底部两只浮筒 + 两端箭头提示巡逻方向
+        ctx.fillStyle = '#9c6b43';
+        roundRect(ctx, p.x, p.y, p.w, 16, 6);
+        ctx.fill();
+        ctx.fillStyle = '#b98355';
+        roundRect(ctx, p.x + 2, p.y + 2, p.w - 4, 6, 3);
+        ctx.fill();
+        ctx.fillStyle = '#7d5433';
+        roundRect(ctx, p.x + 6, p.y + 16, 18, 10, 4);
+        ctx.fill();
+        roundRect(ctx, p.x + p.w - 24, p.y + 16, 18, 10, 4);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,0.75)';
+        var dir = Math.cos((g.time || 0) * (p.spd || 0.3) + (p.ph || 0)) >= 0 ? 1 : -1;
+        var acx = p.x + p.w / 2;
+        ctx.beginPath();
+        ctx.moveTo(acx + dir * 12, p.y - 8);
+        ctx.lineTo(acx + dir * 3, p.y - 13);
+        ctx.lineTo(acx + dir * 3, p.y - 3);
+        ctx.closePath();
+        ctx.fill();
+        ctx.font = 'bold 9px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('浮台', acx, p.y - 18);
+      } else if (p.type === 'ice') {
         ctx.fillStyle = COL.ice;
         roundRect(ctx, p.x, p.y, p.w, bottom - p.y, 8);
         ctx.fill();
@@ -241,6 +342,45 @@
       if (o.kind === 'bear') this._bear(o.x, o.y, t);
       else if (o.kind === 'piranha') this._piranha(o.x, o.y, t);
       else this._spike(o.x, o.y);
+    }
+    // 阵风区：斜向风线 + 起点风牌（看不见风就没法打，必须可视化）
+    for (var wi = 0; wi < (g.winds || []).length; wi++) {
+      var wnd = g.winds[wi];
+      var wl = Math.max(wnd.x0, left), wr = Math.min(wnd.x1, right);
+      if (wr <= wl) continue;
+      var dirw = wnd.fx >= 0 ? 1 : -1;
+      ctx.save();
+      ctx.globalAlpha = 0.3;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      for (var ln = 0; ln < 8; ln++) {
+        var ly = 140 + ln * 42 + Math.sin(t * 2 + ln) * 6;
+        var lx = wl + ((t * 260 * dirw + ln * 97) % (wr - wl) + (wr - wl)) % (wr - wl);
+        var llen = 26 + (ln % 3) * 12;
+        ctx.beginPath();
+        ctx.moveTo(lx, ly);
+        ctx.lineTo(lx + llen * dirw, ly + 4);
+        ctx.stroke();
+      }
+      ctx.restore();
+      // 风牌
+      var signY = this._cpY(g, wnd.x0);
+      ctx.save();
+      ctx.translate(wnd.x0, signY);
+      ctx.fillStyle = '#8a6d4f';
+      ctx.fillRect(-2, -46, 4, 46);
+      ctx.fillStyle = '#f5ecd7';
+      roundRect(ctx, -20, -70, 40, 26, 5);
+      ctx.fill();
+      ctx.strokeStyle = '#8a6d4f';
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
+      ctx.fillStyle = '#4a6fa5';
+      ctx.font = 'bold 14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(dirw >= 0 ? '风→' : '←风', 0, -57);
+      ctx.restore();
     }
     // 树 / 灌木
     for (var d = 0; d < g.decos.length; d++) {
@@ -671,15 +811,21 @@
     var dist = CFG.MIN_JUMP + p * CFG.JUMP_RANGE;
     var vx = dist * CFG.JUMP_VX, vy = -dist * CFG.JUMP_VY, gr = CFG.GRAVITY;
     ctx.save();
-    // 采样到"落回平台/水面"为止。落空时按水面再低 16px 算，否则 drop=0 会把曲线压成一个点
+    // 采样到"落回平台/水面"为止。用 1/120s 数字积分（和 projectLanding/update 同一套物理），
+    // 否则风区里瞄准线会"瞄 A 落 B"；落空时按水面再低 16px 算
     var missY = CFG.GROUND_Y + 16;
-    var drop = Math.max(0, m.y - (hit ? landY : missY));
-    var tLand = (-(-vy) + Math.sqrt(vy * vy + 2 * gr * drop)) / gr;
-    var pts = [];
-    for (var i = 0; i <= 20; i++) {
-      var tt = (i / 20) * tLand;
-      pts.push([m.x + vx * (1 - Math.exp(-0.25 * tt)) / 0.25,
-                m.y - 24 + vy * tt + 0.5 * gr * tt * tt]);
+    var targetDrop = m.y - (hit ? landY : missY);
+    var sx0 = m.x, sy0 = m.y - 24, svx = vx, svy = vy;
+    var pts = [[sx0, sy0]];
+    var sdt = 1 / 120;
+    for (var si = 0; si < 900; si++) {
+      svx += (g._windAt ? g._windAt(sx0) : 0) * sdt;
+      svx *= (1 - 0.25 * sdt);
+      svy += gr * sdt;
+      sx0 += svx * sdt;
+      sy0 += svy * sdt;
+      pts.push([sx0, sy0]);
+      if (svy > 0 && sy0 - (m.y - 24) >= targetDrop) break;
     }
     function strokePath(color, w) {
       ctx.strokeStyle = color;
