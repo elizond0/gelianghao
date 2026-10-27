@@ -147,14 +147,14 @@
     var ctx = this.ctx;
     ctx.fillStyle = color;
     ctx.beginPath();
-    ctx.moveTo(-100, CFG.GROUND_Y + 40);
+    ctx.moveTo(-100, CFG.WATER_Y + 12);
     var span = 220;
     var start = Math.floor(offset / span) * span - span;
     for (var x = start; x <= start + CFG.W + span * 2; x += span) {
       var sx = x - offset;
-      ctx.moveTo(sx, CFG.GROUND_Y + 40);
-      ctx.quadraticCurveTo(sx + span / 2, baseY - h, sx + span, CFG.GROUND_Y + 40);
-      ctx.lineTo(sx, CFG.GROUND_Y + 40);
+      ctx.moveTo(sx, CFG.WATER_Y + 12);
+      ctx.quadraticCurveTo(sx + span / 2, baseY - h, sx + span, CFG.WATER_Y + 12);
+      ctx.lineTo(sx, CFG.WATER_Y + 12);
     }
     ctx.fill();
   };
@@ -184,7 +184,7 @@
   Renderer.prototype._water = function (g, t) {
     var ctx = this.ctx;
     var left = g.camX - 40, right = g.camX + CFG.W + 40;
-    var y = CFG.GROUND_Y + 14;
+    var y = CFG.WATER_Y;   // 水面在画面最底部
     ctx.fillStyle = COL.water;
     ctx.fillRect(left, y, right - left, CFG.H - y + 200);
     ctx.fillStyle = COL.waterDark;
@@ -214,7 +214,7 @@
     for (var i = 0; i < g.platforms.length; i++) {
       var p = g.platforms[i];
       if (p.x + p.w < left || p.x > right) continue;
-      var bottom = CFG.H + 240;
+      var bottom = CFG.WATER_Y + 30;   // 柱子插进水里即可，不再直通屏外
       if (p.type === 'spring') {
         // 弹跳蘑菇：红伞白点 + 白杆，一眼"踩我"
         ctx.fillStyle = '#f1e8d8';
@@ -267,40 +267,10 @@
         ctx.textAlign = 'center';
         ctx.fillText('浮台', acx, p.y - 18);
       } else if (p.type === 'ice') {
-        ctx.fillStyle = COL.ice;
-        roundRect(ctx, p.x, p.y, p.w, bottom - p.y, 8);
-        ctx.fill();
-        ctx.fillStyle = COL.iceEdge;
-        roundRect(ctx, p.x, p.y, p.w, 10, 6);
-        ctx.fill();
+        this._slabPillars(p, bottom, COL.ice, COL.iceEdge, 12);
       } else {
-        ctx.fillStyle = COL.dirt;
-        roundRect(ctx, p.x, p.y, p.w, bottom - p.y, 10);
-        ctx.fill();
-        // 泥土纹理
-        ctx.fillStyle = COL.dirtDark;
-        for (var k = 0; k < Math.floor(p.w / 26); k++) {
-          var dx = p.x + 12 + k * 26 + ((k % 2) * 7);
-          var dy = p.y + 40 + ((k * 37) % 90);
-          circle(ctx, dx, dy, 4.5);
-        }
-        // 草皮
-        ctx.fillStyle = COL.grass;
-        roundRect(ctx, p.x, p.y - 2, p.w, 18, 9);
-        ctx.fill();
-        ctx.fillStyle = COL.grassLight;
-        roundRect(ctx, p.x + 2, p.y - 2, p.w - 4, 8, 4);
-        ctx.fill();
-        // 草尖
-        ctx.fillStyle = COL.grass;
-        for (var j = 0; j < Math.floor(p.w / 16); j++) {
-          var gx = p.x + 8 + j * 16;
-          ctx.beginPath();
-          ctx.moveTo(gx, p.y);
-          ctx.lineTo(gx + 3, p.y - 9);
-          ctx.lineTo(gx + 6, p.y);
-          ctx.fill();
-        }
+        // 石板 + 柱状支撑：平台是"桥板"，下面留出空间让落水的猴子在柱子间飘荡
+        this._slabPillars(p, bottom, COL.dirt, COL.grass, 22, true);
       }
       // 完美着陆靶圈：平台正中央的浅色圆环，提示"踩这里有连击分"
       if (p.type !== 'start' && p.w >= 60) {
@@ -316,6 +286,41 @@
         ctx.stroke();
         ctx.restore();
       }
+    }
+  };
+
+  // 石板平台 + 柱状支撑：板厚 slabH，柱子等分布 2~3 根，插到水里
+  Renderer.prototype._slabPillars = function (p, bottom, col, topCol, slabH, grassTop) {
+    var ctx = this.ctx;
+    var pn = p.w >= 110 ? 3 : 2;
+    ctx.fillStyle = COL.dirtDark;
+    for (var pi = 0; pi < pn; pi++) {
+      var px = p.x + (p.w / pn) * (pi + 0.5) - 9;
+      ctx.fillRect(px, p.y + slabH - 4, 18, bottom - p.y - slabH + 4);
+    }
+    ctx.fillStyle = col;
+    roundRect(ctx, p.x, p.y, p.w, slabH, 8);
+    ctx.fill();
+    if (grassTop) {
+      ctx.fillStyle = COL.grass;
+      roundRect(ctx, p.x, p.y - 2, p.w, 16, 8);
+      ctx.fill();
+      ctx.fillStyle = COL.grassLight;
+      roundRect(ctx, p.x + 2, p.y - 2, p.w - 4, 7, 4);
+      ctx.fill();
+      ctx.fillStyle = COL.grass;
+      for (var j = 0; j < Math.floor(p.w / 16); j++) {
+        var gx = p.x + 8 + j * 16;
+        ctx.beginPath();
+        ctx.moveTo(gx, p.y);
+        ctx.lineTo(gx + 3, p.y - 9);
+        ctx.lineTo(gx + 6, p.y);
+        ctx.fill();
+      }
+    } else {
+      ctx.fillStyle = topCol;
+      roundRect(ctx, p.x, p.y, p.w, 8, 6);
+      ctx.fill();
     }
   };
 
@@ -816,7 +821,7 @@
     ctx.save();
     // 采样到"落回平台/水面"为止。用 1/120s 数字积分（和 projectLanding/update 同一套物理），
     // 否则风区里瞄准线会"瞄 A 落 B"；落空时按水面再低 16px 算
-    var missY = CFG.GROUND_Y + 16;
+    var missY = CFG.WATER_Y - 4;
     var targetDrop = m.y - (hit ? landY : missY);
     var sx0 = m.x, sy0 = m.y - 24, svx = vx, svy = vy;
     var pts = [[sx0, sy0]];
