@@ -125,6 +125,9 @@
     this._decals(g, t);
     this._rope(g, t);
     this._monkeys(g, t, ui);
+    // 层次感：荡在平台下方的猴子画在柱子"后面"——
+    // 这里把柱子/蘑菇杆再叠一层半透明，跨过柱子的落水猴会被罩上柱色
+    this._pillarOverlay(g);
     this._particles(g);
     this._floats(g);
     this._aim(g, ui);
@@ -290,6 +293,37 @@
   };
 
   // 石板平台 + 柱状支撑：板厚 slabH，柱子等分布 2~3 根，插到水里
+  // 柱子半透明叠层：落水猴荡过柱子前面时被柱色罩住，"在柱子间飘荡"的层次感
+  Renderer.prototype._pillarOverlay = function (g) {
+    var ctx = this.ctx;
+    var left = g.camX - 80, right = g.camX + CFG.W + 80;
+    var bottom = CFG.WATER_Y + 30;
+    // 有没有湿猴需要罩色？没有就完全跳过，省一层绘制
+    var wet = g.monkeys && g.monkeys.filter(function (m) { return m.wetT > 0 && m.wetT < 100; });
+    if (!wet.length) return;
+    ctx.save();
+    ctx.globalAlpha = 0.55;
+    for (var i = 0; i < g.platforms.length; i++) {
+      var p = g.platforms[i];
+      if (p.x + p.w < left || p.x > right) continue;
+      if (p.type === 'spring') {
+        ctx.fillStyle = '#f1e8d8';
+        ctx.fillRect(p.x + p.w / 2 - 7, p.y - 12, 14, bottom - p.y);
+      } else if (p.type === 'float') {
+        continue;   // 浮台悬空没有柱子
+      } else {
+        var slabH = p.type === 'ice' ? 12 : 22;
+        ctx.fillStyle = p.type === 'ice' ? COL.ice : COL.dirtDark;
+        var pn = p.w >= 110 ? 3 : 2;
+        for (var pi = 0; pi < pn; pi++) {
+          var px = p.x + (p.w / pn) * (pi + 0.5) - 9;
+          ctx.fillRect(px, p.y + slabH - 4, 18, bottom - p.y - slabH + 4);
+        }
+      }
+    }
+    ctx.restore();
+  };
+
   Renderer.prototype._slabPillars = function (p, bottom, col, topCol, slabH, grassTop) {
     var ctx = this.ctx;
     var pn = p.w >= 110 ? 3 : 2;
