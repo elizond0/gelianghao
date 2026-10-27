@@ -199,6 +199,7 @@
       case 'gold': sfx.play('gold'); toast('金香蕉 +50！', 1200); break;
       case 'checkpoint': sfx.play('checkpoint'); toast('到达存档点！掉下去也能从这儿接着来', 1500); break;
       case 'respawn': sfx.play('respawn'); break;
+      case 'spring': sfx.play('spring'); break;
       case 'gameover': onGameOver(d); break;
     }
     if (location.search.indexOf('dbg=1') >= 0) console.log('ev', type, JSON.stringify(d));
@@ -218,9 +219,21 @@
     $('ovCombo').textContent = d.bestCombo || 0;
     $('ovFalls').textContent = d.falls || 0;
     $('ovBest').textContent = best;
+    $('ovTime').textContent = fmtTime(d.time || 0);
     $('overReason').textContent = overReasonText(d);
     $('btnQuit').classList.remove('show');     // 结算页不需要退出按钮
     setTimeout(function () { show('scrOver'); }, 600);
+  }
+
+  function fmtTime(sec) {
+    sec = Math.max(0, Math.floor(sec));
+    return Math.floor(sec / 60) + ':' + ('0' + (sec % 60)).slice(-2);
+  }
+
+  // 每日挑战：seed 由当天日期决定（全球同图）；换日自动换图
+  function dailySeed() {
+    var d = new Date();
+    return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
   }
 
   // 结算文案：双落水 vs 同一存档点连摔 3 次的卡关，说清楚区别
@@ -293,6 +306,8 @@
       }
     }
     $('hudFalls').textContent = game.falls || 0;
+    var tEl = $('hudTime');
+    if (tEl) tEl.textContent = fmtTime(game.time || 0);
   }
 
   // ---------------- 输入 ----------------
@@ -578,17 +593,19 @@
   }
 
   // ---------------- 按钮 ----------------
-  function startSoloGame() {
+  function startSoloGame(seed, daily) {
     stopNet();
     state.mode = 'solo';
     state.phase = 'playing';
-    newGame();
+    newGame(seed);
     hideScreens();
     game.start();
     sfx.play('ready');
+    if (daily) toast('每日挑战 · 今天这座山全球同图，加油！', 2200);
   }
 
-  $('btnSolo').onclick = startSoloGame;
+  $('btnSolo').onclick = function () { startSoloGame(); };
+  $('btnDaily').onclick = function () { startSoloGame(dailySeed(), true); };
   $('btnRoom').onclick = function () {
     $('lobby').style.display = 'none';
     $('inpCode').value = (location.search.match(/[?&]room=(\d{4})/) || [])[1] || '';
