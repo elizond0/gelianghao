@@ -87,7 +87,11 @@
   var toastHandler = null;
   function setToastHandler(fn) { toastHandler = fn; }
 
+  var vibEnabled = true;
+  function setVibrateEnabled(on) { vibEnabled = !!on; }
+
   function vibrate(type) {
+    if (!vibEnabled) return;
     if (hasWx && wx.vibrateShort) {
       try { wx.vibrateShort({ type: type || 'light' }); } catch (e) {}
       return;
@@ -177,6 +181,7 @@
     toast: toast,
     setToastHandler: setToastHandler,
     vibrate: vibrate,
+    setVibrateEnabled: setVibrateEnabled,
     shareRoom: shareRoom,
     copyText: copyText,
     go: go,
