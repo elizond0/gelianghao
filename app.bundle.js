@@ -1,6 +1,6 @@
 /* eslint-disable */
 /* 哥俩好 · 网页端单文件打包产物 —— 由 scripts/build-web-bundle.js 自动生成，请勿手改 */
-/* 生成时间：2026-10-27T07:19:17.984Z */
+/* 生成时间：2026-10-27T15:05:27.638Z */
 (function () {
   'use strict';
   var __mods = {};
@@ -48,6 +48,8 @@
     JUMP_RANGE: 150,      // 满蓄力相对最小跳多飞 150px：要覆盖后期最大 gap(185) - 平台半宽
     MAX_POWER_MS: 1100,   // 蓄力慢一点，落点更好拿捏
     ROPE_REST: 150,
+    COYOTE: 0.09,       // 土狼时间：离开平台后这么久内仍可起跳（秒）
+    JUMP_BUFFER: 0.15,  // 跳跃缓冲：落地前这么久内按的键，落地立即开始蓄力（秒）
     PATIENCE: 5.5,      // 落水后挂在绳上能荡/被救的耐心时间（秒）
     RESCUE_DELAY: 1.2,  // 落水后先荡这么久，B 才开始收绳钓人（保住"荡"的观感）
     CAM_LERP: 0.12,
@@ -148,6 +150,8 @@
     this.hasJumped = false;   // 本局是否真正起跳过（开局不换人用）
     this.progressX = 0;       // 它自己已经推进到的最远落点：落后的一方一定推进得少
     this.blink = Math.random() * 3;
+    this.coyoteT = 0;         // 土狼时间剩余
+    this.jumpBufT = 0;        // 跳跃缓冲剩余
   }
 
   function Game(opts) {
@@ -412,7 +416,19 @@
     if (this.state !== 'playing') return;
     if (!this.canIOperate()) return;
     var m = this.monkeys[this.active];
-    if (!m.grounded || m.stunT > 0 || m.wetT > 0) return;
+    if (m.stunT > 0 || m.wetT > 0) return;
+    if (!m.grounded) {
+      // 土狼时间：刚离开平台的一瞬间，仍算"在平台上"按下
+      if (m.coyoteT > 0 && !m.charging) {
+        m.charging = true;
+        m.chargeT = 0;
+        this.lastOpOut = { t: 'down', m: m.idx };
+        return;
+      }
+      // 跳跃缓冲：空中先按下，落地立即开始蓄力（按住不放才有效）
+      m.jumpBufT = CFG.JUMP_BUFFER;
+      return;
+    }
     m.charging = true;
     m.chargeT = 0;
     this.lastOpOut = { t: 'down', m: m.idx };
@@ -425,6 +441,7 @@
     var m = this.monkeys[this.active];
     if (!m.charging) return;
     m.charging = false;
+    m.jumpBufT = 0;
     this._launch(m, this._effPower(m));
     this.lastOpOut = { t: 'up', m: this.active, p: m.power };
     this.emit('jump', { idx: m.idx, power: m.power, from: m.x });
@@ -530,7 +547,7 @@
       if (stand && stand.type === 'float' && stand._dx) mm.x += stand._dx;
       // 站着的台子被移走了/不在脚下 → 开始下坠（覆盖所有平台的兜底）
       var under = this.platformAt(mm.x, 7);
-      if (!under) { mm.grounded = false; }
+      if (!under) { mm.grounded = false; mm.coyoteT = CFG.COYOTE; }
       else if (Math.abs(mm.y - under.y) > 0.5) mm.y = under.y;
     }
 
@@ -538,6 +555,8 @@
       var m = ms[i];
       if (m.charging) { m.chargeT += dt; m.squash = 1 - this._effPower(m) * 0.24; }
       if (m.stunT > 0) m.stunT -= dt;
+      if (m.coyoteT > 0) m.coyoteT -= dt;
+      if (m.jumpBufT > 0) m.jumpBufT -= dt;
       if (m.wetT > 0) {
         m.wetT -= dt;
         // 耐心耗尽还没被救上来 -> 别让它掉出世界（绳子拉长/猴子消失的 bug），
@@ -756,6 +775,12 @@
       this._burst(m.x, plat.y, 9, '#d0bfff');
       this.emit('spring', { idx: m.idx });
       return;
+    }
+    // 跳跃缓冲：落地前一刻按的键，落地立即开始蓄力（键还按着才算）
+    if (m.jumpBufT > 0 && this.active === m.idx) {
+      m.jumpBufT = 0;
+      m.charging = true;
+      m.chargeT = 0;
     }
     // 记录"站稳过的最远位置"：换人时用它判断谁落后、这一棒是否已经跳完
     if (m.progressX < m.x) m.progressX = m.x;
@@ -1187,6 +1212,39 @@
   ];
   function themeMix(i) { return THEME_COL[Math.max(0, Math.min(THEME_COL.length - 1, i))]; }
 
+  // hex 混色：#rrggbb x t -> #rrggbb（昼夜渐变用）
+  function mixHex(a, b, t) {
+    var pa = [parseInt(a.substr(1, 2), 16), parseInt(a.substr(3, 2), 16), parseInt(a.substr(5, 2), 16)];
+    var pb = [parseInt(b.substr(1, 2), 16), parseInt(b.substr(3, 2), 16), parseInt(b.substr(5, 2), 16)];
+    var r = Math.round(pa[0] + (pb[0] - pa[0]) * t);
+    var g = Math.round(pa[1] + (pb[1] - pa[1]) * t);
+    var bl = Math.round(pa[2] + (pb[2] - pa[2]) * t);
+    return '#' + ((1 << 24) + (r << 16) + (g << 8) + bl).toString(16).slice(1);
+  }
+
+  // 昼夜四相：清晨 -> 正午 -> 黄昏 -> 雪夜（距离驱动，1600m 一整个昼夜）
+  // 每相给出天空顶/底色；正午相用主题色（和山体配色联动），其余相叠加
+  var DAY_PHASES = [
+    { top: '#ffcf9e', bottom: '#ffe9cf' },   // 清晨
+    null,                                     // 正午：用主题 TC
+    { top: '#ff9d72', bottom: '#ffd9b3' },   // 黄昏
+    { top: '#2c3d6b', bottom: '#50639a' }    // 雪夜
+  ];
+  function dayNight(g, TC) {
+    var dayT = (((g.distance || 0) % 1600) / 1600) * 4;   // 0..4
+    var k = Math.floor(dayT) % 4, f = dayT - Math.floor(dayT);
+    // 相位边缘 20% 内做平滑过渡
+    f = f < 0.8 ? f / 0.8 : 1;
+    var c0 = DAY_PHASES[k] || { top: TC.skyTop, bottom: TC.skyBottom };
+    var c1 = DAY_PHASES[(k + 1) % 4] || { top: TC.skyTop, bottom: TC.skyBottom };
+    return {
+      top: mixHex(c0.top, c1.top, f),
+      bottom: mixHex(c0.bottom, c1.bottom, f),
+      night: (k === 3 ? f : (k === 2 ? 0 : 0)) * 0 + (k === 3 ? f : (k === 2 && f > 0 ? f * 0.3 : 0)),
+      phase: k, frac: f
+    };
+  }
+
   var COL = {
     skyTop: '#bfe7ff',
     skyBottom: '#ffeccf',
@@ -1214,6 +1272,7 @@
     this.t = 0;
     this.clouds = [];
     this.snow = [];
+    this.trail = [[], []];   // 空中拖尾采样：[猴0, 猴1] 各自的 {x,y,t}
     for (var i = 0; i < 60; i++) {
       this.snow.push({ x: Math.random() * 400, y: Math.random() * 700, r: 1 + Math.random() * 2.2, sp: 22 + Math.random() * 40, drift: Math.random() * 6.28 });
     }
@@ -1246,22 +1305,34 @@
       if (midX >= lvlArr[li].until) ti = Math.min(li + 1, lvlArr.length - 1);
     }
     var TC = themeMix(ti);
+    var dn = dayNight(g, TC);
     var sky = ctx.createLinearGradient ? ctx.createLinearGradient(0, 0, 0, H) : null;
     if (sky) {
-      sky.addColorStop(0, TC.skyTop);
-      sky.addColorStop(1, TC.skyBottom);
+      sky.addColorStop(0, dn.top);
+      sky.addColorStop(1, dn.bottom);
       ctx.fillStyle = sky;
     } else {
-      ctx.fillStyle = TC.skyTop;
+      ctx.fillStyle = dn.top;
     }
     ctx.fillRect(0, 0, W, H);
 
-    // 太阳（山顶档位被云遮住，画淡些）
-    ctx.globalAlpha = ti >= 4 ? 0.35 : 1;
-    ctx.fillStyle = COL.sun;
-    circle(ctx, 300, 92, 34);
-    ctx.globalAlpha = 0.25;
-    circle(ctx, 300, 92, 48);
+    // 太阳 / 月亮：随昼夜相位切换（黄昏同框淡出，夜晚换月牙）
+    var sunA = dn.phase === 3 ? 0 : (dn.phase === 2 ? 0.45 : (ti >= 4 ? 0.35 : 1));
+    if (sunA > 0) {
+      ctx.globalAlpha = sunA;
+      ctx.fillStyle = COL.sun;
+      circle(ctx, 300, 92, 34);
+      ctx.globalAlpha = sunA * 0.25;
+      circle(ctx, 300, 92, 48);
+    }
+    if (dn.phase === 3 || (dn.phase === 2 && dn.frac > 0.6)) {
+      var moonA = dn.phase === 3 ? 1 : (dn.frac - 0.6) / 0.4;
+      ctx.globalAlpha = moonA * 0.95;
+      ctx.fillStyle = '#f4f1e0';
+      circle(ctx, 300, 92, 26);
+      ctx.fillStyle = dn.top;   // 用天空色咬掉一块 = 月牙
+      circle(ctx, 310, 86, 22);
+    }
     ctx.globalAlpha = 1;
 
     // 云
@@ -1865,6 +1936,28 @@
       var m = g.monkeys[i];
       var isActive = g.active === i;
       var canOp = g.netMode ? (g.netMode === 'host' && g.seat === i && isActive) : isActive;
+
+      // ---- 跳跃拖尾：空中采样历史位置，先画残影再画本体 ----
+      var ctx = this.ctx;
+      var tr = this.trail[i];
+      if (!m.grounded && m.wetT <= 0) {
+        tr.push({ x: m.x, y: m.y - 20, t: t });
+        if (tr.length > 12) tr.shift();
+      } else {
+        if (tr.length) tr.length = 0;
+      }
+      for (var ti2 = 0; ti2 < tr.length - 1; ti2++) {
+        var sm = tr[ti2];
+        var age = t - sm.t;
+        if (age > 0.26) continue;
+        var al = 0.16 * (1 - age / 0.26);
+        ctx.globalAlpha = al;
+        ctx.fillStyle = i === 0 ? '#c68642' : '#d19a5e';
+        circle(ctx, sm.x, sm.y, 9);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+
       this._monkey(m, t, {
         idx: i,
         active: isActive,
@@ -2360,7 +2453,11 @@
   var toastHandler = null;
   function setToastHandler(fn) { toastHandler = fn; }
 
+  var vibEnabled = true;
+  function setVibrateEnabled(on) { vibEnabled = !!on; }
+
   function vibrate(type) {
+    if (!vibEnabled) return;
     if (hasWx && wx.vibrateShort) {
       try { wx.vibrateShort({ type: type || 'light' }); } catch (e) {}
       return;
@@ -2450,6 +2547,7 @@
     toast: toast,
     setToastHandler: setToastHandler,
     vibrate: vibrate,
+    setVibrateEnabled: setVibrateEnabled,
     shareRoom: shareRoom,
     copyText: copyText,
     go: go,
@@ -4265,7 +4363,7 @@ module.exports = {
   };
 
   var $ = function (id) { return document.getElementById(id); };
-  var SCREENS = ['scrHome', 'scrRoom', 'scrOver', 'scrHow'];
+  var SCREENS = ['scrHome', 'scrRoom', 'scrOver', 'scrHow', 'scrSettings'];
 
   function show(id) {
     SCREENS.forEach(function (s) {
@@ -4277,6 +4375,33 @@ module.exports = {
     if (id === null) { hud.classList.add('show'); hud.style.opacity = '1'; }
     else { hud.classList.remove('show'); hud.style.opacity = '0'; }
   }
+
+  // ---------- 设置：音效/震动（记忆在 localStorage）----------
+  var glhSettings = {
+    sfx: localStorage.getItem('glh_set_sfx') !== '0',
+    vib: localStorage.getItem('glh_set_vib') !== '0'
+  };
+  function applySettings() {
+    sfx.setEnabled(glhSettings.sfx);
+    if (env.setVibrateEnabled) env.setVibrateEnabled(glhSettings.vib);
+    $('tglSfx').classList.toggle('on', glhSettings.sfx);
+    $('tglVib').classList.toggle('on', glhSettings.vib);
+  }
+  $('tglSfx').onclick = function () {
+    glhSettings.sfx = !glhSettings.sfx;
+    localStorage.setItem('glh_set_sfx', glhSettings.sfx ? '1' : '0');
+    applySettings();
+    if (glhSettings.sfx) sfx.play('coin');   // 打开后给个反馈音
+  };
+  $('tglVib').onclick = function () {
+    glhSettings.vib = !glhSettings.vib;
+    localStorage.setItem('glh_set_vib', glhSettings.vib ? '1' : '0');
+    applySettings();
+    if (glhSettings.vib) env.vibrate('light');
+  };
+  $('btnSettings').onclick = function () { show('scrSettings'); };
+  $('btnSetBack').onclick = function () { show('scrHome'); };
+  applySettings();
   function hideScreens() {
     show(null);
     $('btnQuit').classList.add('show');   // 进游戏才显示退出按钮
