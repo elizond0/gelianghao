@@ -81,7 +81,7 @@
   };
 
   var $ = function (id) { return document.getElementById(id); };
-  var SCREENS = ['scrHome', 'scrRoom', 'scrOver', 'scrHow'];
+  var SCREENS = ['scrHome', 'scrRoom', 'scrOver', 'scrHow', 'scrSettings'];
 
   function show(id) {
     SCREENS.forEach(function (s) {
@@ -93,6 +93,33 @@
     if (id === null) { hud.classList.add('show'); hud.style.opacity = '1'; }
     else { hud.classList.remove('show'); hud.style.opacity = '0'; }
   }
+
+  // ---------- 设置：音效/震动（记忆在 localStorage）----------
+  var glhSettings = {
+    sfx: localStorage.getItem('glh_set_sfx') !== '0',
+    vib: localStorage.getItem('glh_set_vib') !== '0'
+  };
+  function applySettings() {
+    sfx.setEnabled(glhSettings.sfx);
+    if (env.setVibrateEnabled) env.setVibrateEnabled(glhSettings.vib);
+    $('tglSfx').classList.toggle('on', glhSettings.sfx);
+    $('tglVib').classList.toggle('on', glhSettings.vib);
+  }
+  $('tglSfx').onclick = function () {
+    glhSettings.sfx = !glhSettings.sfx;
+    localStorage.setItem('glh_set_sfx', glhSettings.sfx ? '1' : '0');
+    applySettings();
+    if (glhSettings.sfx) sfx.play('coin');   // 打开后给个反馈音
+  };
+  $('tglVib').onclick = function () {
+    glhSettings.vib = !glhSettings.vib;
+    localStorage.setItem('glh_set_vib', glhSettings.vib ? '1' : '0');
+    applySettings();
+    if (glhSettings.vib) env.vibrate('light');
+  };
+  $('btnSettings').onclick = function () { show('scrSettings'); };
+  $('btnSetBack').onclick = function () { show('scrHome'); };
+  applySettings();
   function hideScreens() {
     show(null);
     $('btnQuit').classList.add('show');   // 进游戏才显示退出按钮
