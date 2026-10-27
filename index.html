@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<!-- 移动端：禁止缩放 / 双击放大，并铺满刘海屏 -->
+<meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="format-detection" content="telephone=no,email=no,address=no" />
+<meta name="theme-color" content="#bfe7ff" />
+<title>哥俩好 · 拴着一根绳的两只猴</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Ctext y=%2226%22 font-size=%2226%22%3E%F0%9F%99%88%3C/text%3E%3C/svg%3E" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div id="app">
+  <canvas id="cv"></canvas>
+
+  <!-- 顶部 HUD -->
+  <div class="hud" id="hud">
+    <div class="hud-left">
+      <div class="pill"><span class="k">距离</span><b id="hudDist">0</b><i>m</i></div>
+      <div class="pill"><span class="k">分数</span><b id="hudScore">0</b></div>
+    </div>
+    <div class="hud-right">
+      <div class="pill coin"><span>¥</span><b id="hudCoin">0</b></div>
+      <div class="pill fall" id="fallPill"><span class="k">掉落</span><b id="hudFalls">0</b></div>
+      <div class="pill combo" id="comboPill"><span class="k">连击</span><b id="hudCombo">x0</b></div>
+      <div class="pill" id="turnPill"><span class="k">轮到</span><b id="hudTurn">你</b></div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <!-- 游戏中左上角：退出 -->
+  <button class="icon-btn" id="btnQuit" title="退出本局" aria-label="退出本局">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+      <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      <path d="M10 8l-4 4 4 4M6 12h9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+  </button>
+
+  <!-- 网络状态条 -->
+  <div class="netbar" id="netbar"></div>
+
+  <!-- 竖屏提示（只在横屏手机时出现） -->
+  <div class="rotate-tip" id="rotateTip">
+    <div class="rotate-ico">📱</div>
+    <p>把手机竖过来玩更顺手</p>
+  </div>
+
+  <!-- 首页 -->
+  <section class="screen show" id="scrHome">
+    <div class="logo">
+      <div class="logo-monkey" id="logoMonkey">
+        <svg viewBox="0 0 120 110" width="96" height="88" aria-hidden="true">
+          <ellipse cx="30" cy="72" rx="13" ry="10" fill="#c68642"/>
+          <circle cx="16" cy="52" r="11" fill="#c68642"/><circle cx="16" cy="52" r="6" fill="#e8b98f"/>
+          <circle cx="44" cy="52" r="11" fill="#c68642"/><circle cx="44" cy="52" r="6" fill="#e8b98f"/>
+          <circle cx="30" cy="58" r="22" fill="#c68642"/>
+          <ellipse cx="30" cy="63" rx="15" ry="14" fill="#f3d9b1"/>
+          <circle cx="23" cy="58" r="3" fill="#4a3226"/><circle cx="37" cy="58" r="3" fill="#4a3226"/>
+          <path d="M24 68 Q30 73 36 68" stroke="#4a3226" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+          <ellipse cx="30" cy="74" rx="20" ry="12" fill="#f3d9b1"/>
+          <ellipse cx="30" cy="44" rx="7" ry="5" fill="#f3d9b1"/>
+          <circle cx="92" cy="58" r="16" fill="#d19a5e"/>
+          <circle cx="82" cy="46" r="8" fill="#d19a5e"/><circle cx="82" cy="46" r="4" fill="#e8b98f"/>
+          <circle cx="102" cy="46" r="8" fill="#d19a5e"/><circle cx="102" cy="46" r="4" fill="#e8b98f"/>
+          <ellipse cx="92" cy="60" rx="11" ry="10" fill="#f3d9b1"/>
+          <circle cx="87" cy="57" r="2.6" fill="#4a3226"/><circle cx="97" cy="57" r="2.6" fill="#4a3226"/>
+          <path d="M87 65 Q92 69 97 65" stroke="#4a3226" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+          <path d="M42 66 Q66 84 78 66" stroke="#c9954f" stroke-width="5" fill="none" stroke-linecap="round"/>
+          <path d="M42 66 Q66 82 78 66" stroke="#f2c078" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <h1>哥俩好</h1>
+      <p class="sub">一根绳，两只猴，谁也离不开谁</p>
+    </div>
+    <div class="btns">
+      <button class="btn primary" id="btnSolo">单机开跳</button>
+      <button class="btn" id="btnRoom">微信/好友联机</button>
+      <button class="btn ghost" id="btnHow">怎么玩？</button>
+    </div>
+    <p class="best">历史最高 <b id="bestScore">0</b> 分</p>
+  </section>
+
+  <!-- 联机 -->
+  <section class="screen" id="scrRoom">
+    <h2>好友联机</h2>
+    <p class="tip">你是<b id="whoMe">猴哥</b>，只操控<b id="whoMy">前面那只</b>；<br/>另一只交给好友，你俩必须配合着过坑。</p>
+    <div class="btns">
+      <button class="btn primary" id="btnCreate">创建房间</button>
+      <div class="join-row">
+        <input id="inpCode" inputmode="numeric" maxlength="4" placeholder="输入 4 位房号" />
+        <button class="btn small" id="btnJoin">加入</button>
+      </div>
+    </div>
+    <div class="lobby" id="lobby" style="display:none">
+      <div class="code-box">
+        <span>房号</span><b id="roomCode">----</b>
+        <button class="btn tiny" id="btnCopy">复制邀请</button>
+      </div>
+      <div class="seats">
+        <div class="seat" id="seat0"><div class="av">🐵</div><div class="nm">猴哥（我）</div><div class="st" id="st0">未准备</div></div>
+        <div class="seat" id="seat1"><div class="av">🙈</div><div class="nm">等待好友…</div><div class="st" id="st1">—</div></div>
+      </div>
+      <button class="btn primary" id="btnReady">我准备好了</button>
+      <button class="btn ghost small" id="btnLeaveRoom">离开房间</button>
+    </div>
+    <button class="btn ghost back" id="btnRoomBack">返回</button>
+  </section>
+
+  <!-- 结算 -->
+  <section class="screen" id="scrOver">
+    <h2 class="over-title">这局结束了</h2>
+    <p class="over-reason" id="overReason">两只猴子一起掉进了水里…</p>
+    <div class="stats">
+      <div><b id="ovScore">0</b><span>总分</span></div>
+      <div><b id="ovDist">0</b><span>距离(m)</span></div>
+      <div><b id="ovCoin">0</b><span>金币</span></div>
+      <div><b id="ovRescue">0</b><span>救上来</span></div>
+      <div><b id="ovPerfect">0</b><span>完美着陆</span></div>
+      <div><b id="ovGold">0</b><span>金香蕉</span></div>
+      <div><b id="ovCombo">0</b><span>最高连击</span></div>
+      <div><b id="ovFalls">0</b><span>掉落回档</span></div>
+    </div>
+    <p class="best-line">历史最高 <b id="ovBest">0</b> 分</p>
+    <div class="btns">
+      <button class="btn primary" id="btnAgain">再来一局</button>
+      <button class="btn ghost" id="btnHome">回首页</button>
+    </div>
+  </section>
+
+  <!-- 玩法说明 -->
+  <section class="screen sheet scrollable" id="scrHow">
+    <h2>怎么玩</h2>
+    <ul class="how">
+      <li><b>按住屏幕蓄力，松手起跳。</b>按得越久跳得越远、越高。</li>
+      <li>头顶有<b>橙色箭头</b>的那只猴子，才是你现在能操作的那只。</li>
+      <li>它掉进坑里别慌：等箭头换到另一只，<b>让它往前跳过坑</b>，绳子就会把坑里的伙伴<b>钓上来</b>，还能加分。</li>
+      <li>两只一起掉进去，这局就结束。</li>
+      <li>躲开小熊、食人鱼和尖刺，顺手捡金币（+10 分）。</li>
+      <li><b>完美着陆</b>：落在平台正中央的虚线圈里，连击不断加分越高（+15 起，3 连击后每次再 +15）。</li>
+      <li><b>金香蕉</b>：挂得更高的金色香蕉，+50 分，看见了就跳高一点去够。</li>
+      <li><b>蓝色小旗是存档点</b>：双落水后从最近的旗子接着跳，分数保留；同一面旗连掉 3 次才真结算。</li>
+      <li><b>荡绳助力</b>：后面的猴子吊在绷紧的绳上会被往前荡，借力能跳过单跳够不着的坑。</li>
+      <li><b>联机</b>：你俩各控一只猴子，轮流接力，一起把分数做高。</li>
+    </ul>
+    <button class="btn primary" id="btnHowBack">知道了</button>
+  </section>
+</div>
+
+<!-- 单文件打包产物（scripts/build-web-bundle.js 生成）：一次请求加载全部模块。
+     免费隧道/弱网下每个请求固定数秒延迟，17 个模块分着拉要 20s+，打成 one file 直接根治 -->
+<script src="app.bundle.js"></script>
+<script>
+  // 没跑过构建（本地开发）时回退 loader 模式，行为与以前完全一致
+  if (!window.__glhBundled) {
+    document.write('<script src="shared/loader.js"><\/script>');
+    document.write('<script src="app.js"><\/script>');
+  }
+</script>
+<script>
+  // 静态托管：没有 Node WebSocket 服务，联机不可用。
+  window.__GLH_OFFLINE__ = true;
+  window.__GLH_STATIC__ = true;
+</script>
+<script>
+(function () {
+  if (!window.__GLH_OFFLINE__) return;
+  var MSG = '静态版没有联机服务，只能单人玩。要联机请用完整版（自建服务器）';
+  var timer = null;
+  function say() {
+    var t = document.getElementById('toast');
+    if (!t) return;
+    t.textContent = MSG;
+    t.classList.add('show');
+    clearTimeout(timer);
+    timer = setTimeout(function () { t.classList.remove('show'); }, 3600);
+  }
+  // 捕获阶段比目标元素的 onclick 更早，拦住即生效
+  document.addEventListener('click', function (e) {
+    var el = e.target;
+    while (el && el !== document.body) {
+      if (el.id === 'btnRoom' || el.id === 'btnCreate' || el.id === 'btnJoin') {
+        e.preventDefault();
+        e.stopPropagation();
+        say();
+        return;
+      }
+      el = el.parentElement;
+    }
+  }, true);
+})();
+</script>
+</body>
+</html>
