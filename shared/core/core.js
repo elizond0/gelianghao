@@ -25,6 +25,8 @@
     JUMP_RANGE: 150,      // 满蓄力相对最小跳多飞 150px：要覆盖后期最大 gap(185) - 平台半宽
     MAX_POWER_MS: 1100,   // 蓄力慢一点，落点更好拿捏
     ROPE_REST: 150,
+    COYOTE: 0.09,       // 土狼时间：离开平台后这么久内仍可起跳（秒）
+    JUMP_BUFFER: 0.15,  // 跳跃缓冲：落地前这么久内按的键，落地立即开始蓄力（秒）
     PATIENCE: 5.5,      // 落水后挂在绳上能荡/被救的耐心时间（秒）
     RESCUE_DELAY: 1.2,  // 落水后先荡这么久，B 才开始收绳钓人（保住"荡"的观感）
     CAM_LERP: 0.12,
@@ -125,6 +127,8 @@
     this.hasJumped = false;   // 本局是否真正起跳过（开局不换人用）
     this.progressX = 0;       // 它自己已经推进到的最远落点：落后的一方一定推进得少
     this.blink = Math.random() * 3;
+    this.coyoteT = 0;         // 土狼时间剩余
+    this.jumpBufT = 0;        // 跳跃缓冲剩余
   }
 
   function Game(opts) {
@@ -389,7 +393,19 @@
     if (this.state !== 'playing') return;
     if (!this.canIOperate()) return;
     var m = this.monkeys[this.active];
-    if (!m.grounded || m.stunT > 0 || m.wetT > 0) return;
+    if (m.stunT > 0 || m.wetT > 0) return;
+    if (!m.grounded) {
+      // 土狼时间：刚离开平台的一瞬间，仍算"在平台上"按下
+      if (m.coyoteT > 0 && !m.charging) {
+        m.charging = true;
+        m.chargeT = 0;
+        this.lastOpOut = { t: 'down', m: m.idx };
+        return;
+      }
+      // 跳跃缓冲：空中先按下，落地立即开始蓄力（按住不放才有效）
+      m.jumpBufT = CFG.JUMP_BUFFER;
+      return;
+    }
     m.charging = true;
     m.chargeT = 0;
     this.lastOpOut = { t: 'down', m: m.idx };
@@ -402,6 +418,7 @@
     var m = this.monkeys[this.active];
     if (!m.charging) return;
     m.charging = false;
+    m.jumpBufT = 0;
     this._launch(m, this._effPower(m));
     this.lastOpOut = { t: 'up', m: this.active, p: m.power };
     this.emit('jump', { idx: m.idx, power: m.power, from: m.x });
@@ -507,7 +524,7 @@
       if (stand && stand.type === 'float' && stand._dx) mm.x += stand._dx;
       // 站着的台子被移走了/不在脚下 → 开始下坠（覆盖所有平台的兜底）
       var under = this.platformAt(mm.x, 7);
-      if (!under) { mm.grounded = false; }
+      if (!under) { mm.grounded = false; mm.coyoteT = CFG.COYOTE; }
       else if (Math.abs(mm.y - under.y) > 0.5) mm.y = under.y;
     }
 
@@ -515,6 +532,8 @@
       var m = ms[i];
       if (m.charging) { m.chargeT += dt; m.squash = 1 - this._effPower(m) * 0.24; }
       if (m.stunT > 0) m.stunT -= dt;
+      if (m.coyoteT > 0) m.coyoteT -= dt;
+      if (m.jumpBufT > 0) m.jumpBufT -= dt;
       if (m.wetT > 0) {
         m.wetT -= dt;
         // 耐心耗尽还没被救上来 -> 别让它掉出世界（绳子拉长/猴子消失的 bug），
@@ -733,6 +752,12 @@
       this._burst(m.x, plat.y, 9, '#d0bfff');
       this.emit('spring', { idx: m.idx });
       return;
+    }
+    // 跳跃缓冲：落地前一刻按的键，落地立即开始蓄力（键还按着才算）
+    if (m.jumpBufT > 0 && this.active === m.idx) {
+      m.jumpBufT = 0;
+      m.charging = true;
+      m.chargeT = 0;
     }
     // 记录"站稳过的最远位置"：换人时用它判断谁落后、这一棒是否已经跳完
     if (m.progressX < m.x) m.progressX = m.x;
