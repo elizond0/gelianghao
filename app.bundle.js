@@ -1,6 +1,6 @@
 /* eslint-disable */
 /* 哥俩好 · 网页端单文件打包产物 —— 由 scripts/build-web-bundle.js 自动生成，请勿手改 */
-/* 生成时间：2026-10-26T14:24:42.568Z */
+/* 生成时间：2026-10-27T01:53:26.986Z */
 (function () {
   'use strict';
   var __mods = {};
@@ -58,8 +58,28 @@
     GOLD_BONUS: 50,
     SWING_LIFT: 2.6,      // 绳子绷紧且下方那只下落时，把它往上悠的加速度系数
     MAX_FALLS_PER_CP: 3,  // 同一检查点连续坠落 3 次 -> 判定卡关，结算（防焊死）
-    BOTH_WET_DELAY: 0.9   // 双落水后停顿这么久再回检查点/结算（给"完蛋感"留表演时间）
+    BOTH_WET_DELAY: 0.9,  // 双落水后停顿这么久再回检查点/结算（给"完蛋感"留表演时间）
+    // ---- 二期：面包和年糕式地形 2.0 ----
+    MV_CHANCE: 0.18,      // 移动浮台概率（仅山腰以上生成）
+    MV_AMP_MIN: 26, MV_AMP_MAX: 44,   // 浮台水平巡逻幅度（半程）
+    MV_PERIOD_MIN: 2.6, MV_PERIOD_MAX: 3.8, // 巡逻一个来回的秒数
+    SPRING_CHANCE: 0.11,  // 弹跳蘑菇概率（山腰以上；上面不刷障碍）
+    SPRING_POWER: 0.95,   // 蘑菇弹跳力度（相对满蓄力的比例）
+    WIND_FROM: 2600,      // 阵风区从这段距离开始出现（进山了）
+    WIND_SPACING: 720,    // 两个风区至少隔这么远
+    WIND_CHANCE: 0.42,    // 满足间距后每个新坑位刷风的概率
+    WIND_F_MIN: 55, WIND_F_MAX: 105  // 风力（水平加速度 px/s^2，方向随机）
   };
+
+  // 山体主题：由 levelAt() 的档位驱动，渲染层读同一个下标做配色/飘雪
+  // （面包和年糕的"山脚 -> 雪线 -> 暴风雪山顶"爬升感）
+  var THEMES = [
+    { name: '山脚草坡', snow: 0 },
+    { name: '针叶林带', snow: 0 },
+    { name: '碎石坡',   snow: 0 },
+    { name: '雪线以上', snow: 0.35 },
+    { name: '暴风雪山顶', snow: 1 }
+  ];
 
   var LEVELS = [
     { until: 900,  gapMin: 55,  gapMax: 105, platMin: 80,  platMax: 128, obs: 0,    spike: false, ice: false },
@@ -88,6 +108,18 @@
   function levelAt(x) {
     for (var i = 0; i < LEVELS.length; i++) if (x < LEVELS[i].until) return LEVELS[i];
     return LEVELS[LEVELS.length - 1];
+  }
+
+  function levelIdx(x) {
+    for (var i = 0; i < LEVELS.length; i++) if (x < LEVELS[i].until) return i;
+    return LEVELS.length - 1;
+  }
+
+  // 三角波（确定性巡逻：不积累误差，快照/联机两端时间略偏也只差一小格）
+  // u ∈ [0,1) → -1 → +1 → -1
+  function tri01(t) {
+    var f = t - Math.floor(t);
+    return f < 0.5 ? f * 4 - 1 : 3 - f * 4;
   }
 
   function Monkey(idx) {
@@ -144,6 +176,8 @@
     this.shake = 0;
     this.platforms = [];
     this.obstacles = [];
+    this.winds = [];          // 阵风区 [{x0,x1,fx}]（确定性生成，两端一致）
+    this._lastWindX = CFG.WIND_FROM;
     this.pickups = [];
     this.decos = [];
     this.particles = [];
@@ -206,14 +240,42 @@
       var p = { x: last.x + last.w + gap, w: pw, y: y, type: 'normal' };
       if (L.ice && r() < 0.22) p.type = 'ice';
 
-      if (r() < L.obs && pw > 86) {
+      // 移动浮台（山腰以上）：绕初始点做三角波巡逻，位置由时间决定、两端一致
+      var li = levelIdx(p.x);
+      if (li >= 3 && r() < CFG.MV_CHANCE && pw >= 60 && p.type !== 'ice') {
+        p.type = 'float';
+        p.x0 = p.x;
+        p.amp = Math.round(lerp(CFG.MV_AMP_MIN, CFG.MV_AMP_MAX, r()));
+        p.period = lerp(CFG.MV_PERIOD_MIN, CFG.MV_PERIOD_MAX, r());
+        p.ph = r();
+        p.spd = 1 / p.period;
+      }
+      // 弹跳蘑菇（山腰以上）：踩上去自动弹起，力度≈满蓄力，上面不放障碍
+      var isSpring = false;
+      if (li >= 2 && p.type === 'normal' && r() < CFG.SPRING_CHANCE && pw >= 64) {
+        p.type = 'spring';
+        isSpring = true;
+      }
+
+      // 阵风区（进山后）：挂在坑位上空，空中被水平吹；带风牌提示
+      if (p.x > this._lastWindX + CFG.WIND_SPACING && r() < CFG.WIND_CHANCE) {
+        var fx = (r() < 0.5 ? -1 : 1) * lerp(CFG.WIND_F_MIN, CFG.WIND_F_MAX, r());
+        this.winds.push({
+          x0: Math.round(last.x + last.w - 30),
+          x1: Math.round(p.x + 30),
+          fx: Math.round(fx)
+        });
+        this._lastWindX = p.x;
+      }
+
+      if (!isSpring && r() < L.obs && pw > 86) {
         this.obstacles.push({
           kind: r() < 0.55 ? 'bear' : 'piranha',
           x: Math.round(p.x + pw * (0.4 + r() * 0.25)),
           y: y, w: 26, h: 26, dead: false
         });
       }
-      if (L.spike && r() < 0.28 && pw > 80) {
+      if (!isSpring && L.spike && r() < 0.28 && pw > 80) {
         this.obstacles.push({ kind: 'spike', x: Math.round(p.x + pw * 0.55), y: y, w: 22, h: 12, dead: false });
       }
       if (r() < 0.7 && pw > 84) this.pickups.push({ x: Math.round(p.x + pw * 0.5), y: y - 48, taken: false, t: r() * 6 });
@@ -242,6 +304,7 @@
     if (this.platforms.length > 10) {
       this.platforms = this.platforms.filter(function (p) { return p.x + p.w > cut; });
       this.obstacles = this.obstacles.filter(function (o) { return o.x > cut; });
+      this.winds = this.winds.filter(function (w) { return w.x1 > cut; });
       this.pickups = this.pickups.filter(function (o) { return o.x > cut; });
       this.decos = this.decos.filter(function (o) { return o.x > cut; });
     }
@@ -329,13 +392,32 @@
   // 水平：vx(t) = vx0 * e^(-DRAG*t)  →  x(t) = x0 + vx0 * (1 - e^(-DRAG*t)) / DRAG
   // 竖直：y(t) = y0 + vy0*t + 0.5*G*t^2（无阻尼）
   var DRAG = 0.25;
+
+  // x 处的风力（不在任何风区返回 0）。地形生成与主循环共用，保证瞄准线不骗人
+  Game.prototype._windAt = function (x) {
+    for (var i = 0; i < this.winds.length; i++) {
+      var w = this.winds[i];
+      if (x >= w.x0 && x <= w.x1) return w.fx;
+    }
+    return 0;
+  };
+
+  // 落点预测：数字积分，和 update() 的物理完全一致（阻尼 + 风），保证瞄准线可信。
+  // 旧版闭式解没法算风，风区里"瞄哪落哪"会失灵，已改成 1/120s 步进积分。
   Game.prototype.projectLanding = function (fromX, power, fromY) {
     var dist = CFG.MIN_JUMP + clamp(power, 0, 1) * CFG.JUMP_RANGE;
     var vx = dist * CFG.JUMP_VX, vy = -dist * CFG.JUMP_VY;
-    var drop = Math.max(0, (fromY || CFG.GROUND_Y) - CFG.GROUND_Y);
-    var t = (-vy + Math.sqrt(vy * vy + 2 * CFG.GRAVITY * drop)) / CFG.GRAVITY;
-    var travel = vx * (1 - Math.exp(-DRAG * t)) / DRAG;
-    return fromX + travel;
+    var x = fromX, y = fromY || CFG.GROUND_Y;
+    var dt = 1 / 120;
+    for (var i = 0; i < 900; i++) {
+      vx += this._windAt(x) * dt;
+      vx *= (1 - DRAG * dt);
+      vy += CFG.GRAVITY * dt;
+      x += vx * dt;
+      y += vy * dt;
+      if (vy > 0 && y >= CFG.GROUND_Y) break;
+    }
+    return x;
   };
 
   Game.prototype.chargeRatio = function () {
@@ -352,6 +434,27 @@
     dt = Math.min(dt, 1 / 30);
     this.time += dt;
     var ms = this.monkeys;
+
+    // 移动浮台：先记下每只猴站的台子，推台子，再带着猴一起走
+    // （不载猴的话猴会悬在原地被台子甩出去，看着像 bug）
+    for (var pi = 0; pi < this.platforms.length; pi++) {
+      var pl = this.platforms[pi];
+      if (!pl.mv && pl.type !== 'float') continue;
+      if (pl.x0 === undefined) { pl.x0 = pl.x; pl.amp = 30; pl.spd = 1 / 3; pl.ph = 0; }
+      var nx = pl.x0 + pl.amp * tri01(this.time * pl.spd + pl.ph);
+      pl._dx = nx - pl.x;
+      pl.x = nx;
+    }
+    for (var mi = 0; mi < 2; mi++) {
+      var mm = ms[mi];
+      if (!mm.grounded || mm.wetT > 0) continue;
+      var stand = this.platformAt(mm.x);
+      if (stand && stand.type === 'float' && stand._dx) mm.x += stand._dx;
+      // 站着的台子被移走了/不在脚下 → 开始下坠（覆盖所有平台的兜底）
+      var under = this.platformAt(mm.x);
+      if (!under) { mm.grounded = false; }
+      else if (Math.abs(mm.y - under.y) > 0.5) mm.y = under.y;
+    }
 
     for (var i = 0; i < 2; i++) {
       var m = ms[i];
@@ -370,7 +473,12 @@
           if (hit) this._land(m, hit);
           else if (!this.platformAt(m.x) && m.y > CFG.GROUND_Y + 14) this._wet(m);
         }
-        if (!m.grounded) m.vx *= (1 - 0.25 * dt);
+        // 阵风：只在空中受力（地面无感，落地即安全），方向和强度由地形决定
+        if (!m.grounded) {
+          m.vx *= (1 - 0.25 * dt);
+          var wf = this._windAt(m.x);
+          if (wf) m.vx += wf * dt;
+        }
       }
     }
 
@@ -551,6 +659,20 @@
     m.vx = 0;
     m.grounded = true;
     m.squash = 1.18;
+    // 弹跳蘑菇：踩上去自动弹起（≈满蓄力），连击不清零也不算完美——
+    // 它是"路线奖励"不是"技术判定"，跳上去该去哪由玩家下次蓄力决定
+    if (plat.type === 'spring' && m.vy >= 0) {
+      var sd = CFG.MIN_JUMP + CFG.JUMP_RANGE * CFG.SPRING_POWER;
+      m.vx = sd * CFG.JUMP_VX;
+      m.vy = -sd * CFG.JUMP_VY;
+      m.grounded = false;
+      m.squash = 0.68;
+      m.hasJumped = true;
+      this._float(m.x, plat.y - 86, '弹！', '#7048e8');
+      this._burst(m.x, plat.y, 9, '#d0bfff');
+      this.emit('spring', { idx: m.idx });
+      return;
+    }
     // 记录"站稳过的最远位置"：换人时用它判断谁落后、这一棒是否已经跳完
     if (m.progressX < m.x) m.progressX = m.x;
     this._burst(m.x, plat.y, 5, plat.type === 'ice' ? '#bdf1ff' : '#d8e3a8');
@@ -727,6 +849,7 @@
       coins: this.coins, rescues: this.rescues,
       falls: this.falls, bestCombo: this.bestCombo,
       perfects: this.perfects, golds: this.golds,
+      time: Math.round(this.time),
       reason: reason || 'both-wet'
     });
   };
@@ -903,7 +1026,7 @@
     if (this.shake > 0) this.shake = Math.max(0, this.shake - dt * 3);
   };
 
-  return { Game: Game, CFG: CFG, LEVELS: LEVELS, mulberry32: mulberry32 };
+  return { Game: Game, CFG: CFG, LEVELS: LEVELS, THEMES: THEMES, mulberry32: mulberry32 };
 });
   });
 
@@ -921,6 +1044,17 @@
     root.GLHCore = Core;
   }
   var CFG = (Core || {}).CFG;
+  var THEMES = (Core || {}).THEMES || [];
+
+  // 各档位配色（和 core 的 LEVELS/THEMES 一一对应：山脚→针叶林→碎石坡→雪线→暴风雪山顶）
+  var THEME_COL = [
+    { skyTop: '#bfe7ff', skyBottom: '#ffeccf', hillFar: '#a7d8c3', hillNear: '#7cc7a5', grass: '#63b96b', grassLight: '#8ed77b', dirt: '#8a5a3b' },
+    { skyTop: '#aee2f5', skyBottom: '#ffe4c4', hillFar: '#8fc7ae', hillNear: '#63b58c', grass: '#4fa85e', grassLight: '#7cc86e', dirt: '#7d5138' },
+    { skyTop: '#a4d4e8', skyBottom: '#e8d8c8', hillFar: '#a9a29a', hillNear: '#8a8378', grass: '#9b937f', grassLight: '#b5ac93', dirt: '#6f5643' },
+    { skyTop: '#8fb8d8', skyBottom: '#d8e4ee', hillFar: '#b8c4cf', hillNear: '#93a3b3', grass: '#dfe8ef', grassLight: '#f4f9fc', dirt: '#5f6b78' },
+    { skyTop: '#6d8fb3', skyBottom: '#c2d2e2', hillFar: '#93a5bb', hillNear: '#6e8299', grass: '#eef4fa', grassLight: '#ffffff', dirt: '#4e5a68' }
+  ];
+  function themeMix(i) { return THEME_COL[Math.max(0, Math.min(THEME_COL.length - 1, i))]; }
 
   var COL = {
     skyTop: '#bfe7ff',
@@ -948,6 +1082,10 @@
     this.opts = opts || {};
     this.t = 0;
     this.clouds = [];
+    this.snow = [];
+    for (var i = 0; i < 60; i++) {
+      this.snow.push({ x: Math.random() * 400, y: Math.random() * 700, r: 1 + Math.random() * 2.2, sp: 22 + Math.random() * 40, drift: Math.random() * 6.28 });
+    }
     for (var i = 0; i < 7; i++) {
       this.clouds.push({ x: i * 240 + Math.random() * 120, y: 40 + Math.random() * 130, s: 0.6 + Math.random() * 0.7, sp: 4 + Math.random() * 8 });
     }
@@ -968,18 +1106,27 @@
     }
 
     ctx.save();
-    // ---------- 天空 ----------
+    // ---------- 天空（按所在山体档位换配色：越往上越冷、越接近山顶越昏暗）----------
+    // 主题下标：中心视线落在第几档地形（LEVELS[i].until 是该档右边界）
+    var ti = 0;
+    var midX = g.camX + W / 2;
+    var lvlArr = Core.LEVELS || [];
+    for (var li = 0; li < lvlArr.length; li++) {
+      if (midX >= lvlArr[li].until) ti = Math.min(li + 1, lvlArr.length - 1);
+    }
+    var TC = themeMix(ti);
     var sky = ctx.createLinearGradient ? ctx.createLinearGradient(0, 0, 0, H) : null;
     if (sky) {
-      sky.addColorStop(0, COL.skyTop);
-      sky.addColorStop(1, COL.skyBottom);
+      sky.addColorStop(0, TC.skyTop);
+      sky.addColorStop(1, TC.skyBottom);
       ctx.fillStyle = sky;
     } else {
-      ctx.fillStyle = COL.skyTop;
+      ctx.fillStyle = TC.skyTop;
     }
     ctx.fillRect(0, 0, W, H);
 
-    // 太阳
+    // 太阳（山顶档位被云遮住，画淡些）
+    ctx.globalAlpha = ti >= 4 ? 0.35 : 1;
     ctx.fillStyle = COL.sun;
     circle(ctx, 300, 92, 34);
     ctx.globalAlpha = 0.25;
@@ -995,8 +1142,12 @@
     }
 
     // 远山（视差）
-    this._hills(g.camX * 0.25, 300, COL.hillFar, 120);
-    this._hills(g.camX * 0.45 + 90, 350, COL.hillNear, 100);
+    this._hills(g.camX * 0.25, 300, TC.hillFar, 120);
+    this._hills(g.camX * 0.45 + 90, 350, TC.hillNear, 100);
+
+    // 飘雪（雪线以上才下；屏幕空间粒子，不进世界坐标）
+    var snowAmt = THEMES[ti] ? THEMES[ti].snow : 0;
+    if (snowAmt > 0) this._snow(g, t, snowAmt);
 
     // ---------- 世界 ----------
     ctx.save();
@@ -1041,6 +1192,28 @@
     ctx.fill();
   };
 
+  // 飘雪：屏幕空间循环下落 + 随风漂移（山顶暴风雪里风是把猴子吹走的元凶，雪跟着一起飘才像）
+  Renderer.prototype._snow = function (g, t, amt) {
+    var ctx = this.ctx;
+    var windAll = 0;
+    for (var i = 0; i < (g.winds || []).length; i++) {
+      var w = g.winds[i];
+      if (g.camX + CFG.W / 2 >= w.x0 && g.camX + CFG.W / 2 <= w.x1) windAll = w.fx;
+    }
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    var n = Math.round(this.snow.length * amt);
+    for (var j = 0; j < n; j++) {
+      var f = this.snow[j];
+      var sy = (f.y + t * f.sp) % (CFG.H + 40) - 20;
+      var sx = (f.x + t * (8 + f.r * 4) + windAll * 0.12 + Math.sin(t + f.drift) * 8) % (CFG.W + 40);
+      if (sx < 0) sx += CFG.W + 40;
+      ctx.globalAlpha = 0.4 + 0.5 * (f.r / 3.2);
+      circle(ctx, sx - 20, sy - 20, f.r);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  };
+
   Renderer.prototype._water = function (g, t) {
     var ctx = this.ctx;
     var left = g.camX - 40, right = g.camX + CFG.W + 40;
@@ -1075,7 +1248,58 @@
       var p = g.platforms[i];
       if (p.x + p.w < left || p.x > right) continue;
       var bottom = CFG.H + 240;
-      if (p.type === 'ice') {
+      if (p.type === 'spring') {
+        // 弹跳蘑菇：红伞白点 + 白杆，一眼"踩我"
+        ctx.fillStyle = '#f1e8d8';
+        ctx.fillRect(p.x + p.w / 2 - 7, p.y - 12, 14, bottom - p.y);
+        ctx.fillStyle = '#e0524d';
+        ctx.beginPath();
+        ctx.moveTo(p.x + 2, p.y);
+        ctx.quadraticCurveTo(p.x + p.w / 2, p.y - 26, p.x + p.w - 2, p.y);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        circle(ctx, p.x + p.w * 0.32, p.y - 10, 3.4);
+        ctx.fill();
+        circle(ctx, p.x + p.w * 0.62, p.y - 14, 2.6);
+        ctx.fill();
+        circle(ctx, p.x + p.w * 0.5, p.y - 5, 2.2);
+        ctx.fill();
+        // 弹跳预兆：伞面呼吸
+        ctx.globalAlpha = 0.35 + 0.2 * Math.sin(t * 5 + p.x);
+        ctx.strokeStyle = '#ffd8d6';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(p.x + 2, p.y);
+        ctx.quadraticCurveTo(p.x + p.w / 2, p.y - 26, p.x + p.w - 2, p.y);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      } else if (p.type === 'float') {
+        // 移动浮台：木板 + 底部两只浮筒 + 两端箭头提示巡逻方向
+        ctx.fillStyle = '#9c6b43';
+        roundRect(ctx, p.x, p.y, p.w, 16, 6);
+        ctx.fill();
+        ctx.fillStyle = '#b98355';
+        roundRect(ctx, p.x + 2, p.y + 2, p.w - 4, 6, 3);
+        ctx.fill();
+        ctx.fillStyle = '#7d5433';
+        roundRect(ctx, p.x + 6, p.y + 16, 18, 10, 4);
+        ctx.fill();
+        roundRect(ctx, p.x + p.w - 24, p.y + 16, 18, 10, 4);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,0.75)';
+        var dir = Math.cos((g.time || 0) * (p.spd || 0.3) + (p.ph || 0)) >= 0 ? 1 : -1;
+        var acx = p.x + p.w / 2;
+        ctx.beginPath();
+        ctx.moveTo(acx + dir * 12, p.y - 8);
+        ctx.lineTo(acx + dir * 3, p.y - 13);
+        ctx.lineTo(acx + dir * 3, p.y - 3);
+        ctx.closePath();
+        ctx.fill();
+        ctx.font = 'bold 9px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('浮台', acx, p.y - 18);
+      } else if (p.type === 'ice') {
         ctx.fillStyle = COL.ice;
         roundRect(ctx, p.x, p.y, p.w, bottom - p.y, 8);
         ctx.fill();
@@ -1151,6 +1375,45 @@
       if (o.kind === 'bear') this._bear(o.x, o.y, t);
       else if (o.kind === 'piranha') this._piranha(o.x, o.y, t);
       else this._spike(o.x, o.y);
+    }
+    // 阵风区：斜向风线 + 起点风牌（看不见风就没法打，必须可视化）
+    for (var wi = 0; wi < (g.winds || []).length; wi++) {
+      var wnd = g.winds[wi];
+      var wl = Math.max(wnd.x0, left), wr = Math.min(wnd.x1, right);
+      if (wr <= wl) continue;
+      var dirw = wnd.fx >= 0 ? 1 : -1;
+      ctx.save();
+      ctx.globalAlpha = 0.3;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      for (var ln = 0; ln < 8; ln++) {
+        var ly = 140 + ln * 42 + Math.sin(t * 2 + ln) * 6;
+        var lx = wl + ((t * 260 * dirw + ln * 97) % (wr - wl) + (wr - wl)) % (wr - wl);
+        var llen = 26 + (ln % 3) * 12;
+        ctx.beginPath();
+        ctx.moveTo(lx, ly);
+        ctx.lineTo(lx + llen * dirw, ly + 4);
+        ctx.stroke();
+      }
+      ctx.restore();
+      // 风牌
+      var signY = this._cpY(g, wnd.x0);
+      ctx.save();
+      ctx.translate(wnd.x0, signY);
+      ctx.fillStyle = '#8a6d4f';
+      ctx.fillRect(-2, -46, 4, 46);
+      ctx.fillStyle = '#f5ecd7';
+      roundRect(ctx, -20, -70, 40, 26, 5);
+      ctx.fill();
+      ctx.strokeStyle = '#8a6d4f';
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
+      ctx.fillStyle = '#4a6fa5';
+      ctx.font = 'bold 14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(dirw >= 0 ? '风→' : '←风', 0, -57);
+      ctx.restore();
     }
     // 树 / 灌木
     for (var d = 0; d < g.decos.length; d++) {
@@ -1581,15 +1844,21 @@
     var dist = CFG.MIN_JUMP + p * CFG.JUMP_RANGE;
     var vx = dist * CFG.JUMP_VX, vy = -dist * CFG.JUMP_VY, gr = CFG.GRAVITY;
     ctx.save();
-    // 采样到"落回平台/水面"为止。落空时按水面再低 16px 算，否则 drop=0 会把曲线压成一个点
+    // 采样到"落回平台/水面"为止。用 1/120s 数字积分（和 projectLanding/update 同一套物理），
+    // 否则风区里瞄准线会"瞄 A 落 B"；落空时按水面再低 16px 算
     var missY = CFG.GROUND_Y + 16;
-    var drop = Math.max(0, m.y - (hit ? landY : missY));
-    var tLand = (-(-vy) + Math.sqrt(vy * vy + 2 * gr * drop)) / gr;
-    var pts = [];
-    for (var i = 0; i <= 20; i++) {
-      var tt = (i / 20) * tLand;
-      pts.push([m.x + vx * (1 - Math.exp(-0.25 * tt)) / 0.25,
-                m.y - 24 + vy * tt + 0.5 * gr * tt * tt]);
+    var targetDrop = m.y - (hit ? landY : missY);
+    var sx0 = m.x, sy0 = m.y - 24, svx = vx, svy = vy;
+    var pts = [[sx0, sy0]];
+    var sdt = 1 / 120;
+    for (var si = 0; si < 900; si++) {
+      svx += (g._windAt ? g._windAt(sx0) : 0) * sdt;
+      svx *= (1 - 0.25 * sdt);
+      svy += gr * sdt;
+      sx0 += svx * sdt;
+      sy0 += svy * sdt;
+      pts.push([sx0, sy0]);
+      if (svy > 0 && sy0 - (m.y - 24) >= targetDrop) break;
     }
     function strokePath(color, w) {
       ctx.strokeStyle = color;
@@ -2205,6 +2474,11 @@ module.exports = {
       case 'checkpoint':
         this._tone(392, 0.1, 'triangle', 0.08);
         this._tone(523, 0.18, 'triangle', 0.08, 0.09);
+        break;
+      case 'spring':
+        // "boing"：低到高的滑音，像踩上弹簧
+        this._tone(180, 0.22, 'sine', 0.1);
+        this._tone(560, 0.2, 'sine', 0.08, 0.05);
         break;
       case 'over':
         this._tone(523, 0.16, 'triangle', 0.09);
@@ -3524,13 +3798,17 @@ module.exports = {
     // gameover 的音效键叫 'over'，其余事件名与音效键一致
     this._sfx(type === 'gameover' ? 'over' : type);
     if (type === 'coin' || type === 'rescue' || type === 'hit' ||
-        type === 'perfect' || type === 'gold' || type === 'checkpoint') {
+        type === 'perfect' || type === 'gold' || type === 'checkpoint' ||
+        type === 'spring') {
       this._vibrate('light');
     }
     if (type === 'gameover') {
       this._vibrate('heavy');
       this._onOver(d);
       return;
+    }
+    if (type === 'spring' && this.ui.onToast) {
+      this.ui.onToast('弹！蘑菇送你一程', 1300);
     }
     if (type === 'checkpoint' && this.ui.onToast) {
       this.ui.onToast('到达存档点！掉下去也能从这儿接着来', 1500);
@@ -3553,6 +3831,7 @@ module.exports = {
       rescue: rescues,
       falls: (d && d.falls) || 0,
       bestCombo: (d && d.bestCombo) || 0,
+      time: (d && d.time) || 0,
       perfects: (d && d.perfects) || 0,
       golds: (d && d.golds) || 0
     });
@@ -3815,6 +4094,7 @@ module.exports = {
       case 'gold': sfx.play('gold'); toast('金香蕉 +50！', 1200); break;
       case 'checkpoint': sfx.play('checkpoint'); toast('到达存档点！掉下去也能从这儿接着来', 1500); break;
       case 'respawn': sfx.play('respawn'); break;
+      case 'spring': sfx.play('spring'); break;
       case 'gameover': onGameOver(d); break;
     }
     if (location.search.indexOf('dbg=1') >= 0) console.log('ev', type, JSON.stringify(d));
@@ -3834,9 +4114,21 @@ module.exports = {
     $('ovCombo').textContent = d.bestCombo || 0;
     $('ovFalls').textContent = d.falls || 0;
     $('ovBest').textContent = best;
+    $('ovTime').textContent = fmtTime(d.time || 0);
     $('overReason').textContent = overReasonText(d);
     $('btnQuit').classList.remove('show');     // 结算页不需要退出按钮
     setTimeout(function () { show('scrOver'); }, 600);
+  }
+
+  function fmtTime(sec) {
+    sec = Math.max(0, Math.floor(sec));
+    return Math.floor(sec / 60) + ':' + ('0' + (sec % 60)).slice(-2);
+  }
+
+  // 每日挑战：seed 由当天日期决定（全球同图）；换日自动换图
+  function dailySeed() {
+    var d = new Date();
+    return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
   }
 
   // 结算文案：双落水 vs 同一存档点连摔 3 次的卡关，说清楚区别
@@ -3909,6 +4201,8 @@ module.exports = {
       }
     }
     $('hudFalls').textContent = game.falls || 0;
+    var tEl = $('hudTime');
+    if (tEl) tEl.textContent = fmtTime(game.time || 0);
   }
 
   // ---------------- 输入 ----------------
@@ -4194,17 +4488,19 @@ module.exports = {
   }
 
   // ---------------- 按钮 ----------------
-  function startSoloGame() {
+  function startSoloGame(seed, daily) {
     stopNet();
     state.mode = 'solo';
     state.phase = 'playing';
-    newGame();
+    newGame(seed);
     hideScreens();
     game.start();
     sfx.play('ready');
+    if (daily) toast('每日挑战 · 今天这座山全球同图，加油！', 2200);
   }
 
-  $('btnSolo').onclick = startSoloGame;
+  $('btnSolo').onclick = function () { startSoloGame(); };
+  $('btnDaily').onclick = function () { startSoloGame(dailySeed(), true); };
   $('btnRoom').onclick = function () {
     $('lobby').style.display = 'none';
     $('inpCode').value = (location.search.match(/[?&]room=(\d{4})/) || [])[1] || '';
