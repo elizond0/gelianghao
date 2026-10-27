@@ -23,6 +23,39 @@
   ];
   function themeMix(i) { return THEME_COL[Math.max(0, Math.min(THEME_COL.length - 1, i))]; }
 
+  // hex 混色：#rrggbb x t -> #rrggbb（昼夜渐变用）
+  function mixHex(a, b, t) {
+    var pa = [parseInt(a.substr(1, 2), 16), parseInt(a.substr(3, 2), 16), parseInt(a.substr(5, 2), 16)];
+    var pb = [parseInt(b.substr(1, 2), 16), parseInt(b.substr(3, 2), 16), parseInt(b.substr(5, 2), 16)];
+    var r = Math.round(pa[0] + (pb[0] - pa[0]) * t);
+    var g = Math.round(pa[1] + (pb[1] - pa[1]) * t);
+    var bl = Math.round(pa[2] + (pb[2] - pa[2]) * t);
+    return '#' + ((1 << 24) + (r << 16) + (g << 8) + bl).toString(16).slice(1);
+  }
+
+  // 昼夜四相：清晨 -> 正午 -> 黄昏 -> 雪夜（距离驱动，1600m 一整个昼夜）
+  // 每相给出天空顶/底色；正午相用主题色（和山体配色联动），其余相叠加
+  var DAY_PHASES = [
+    { top: '#ffcf9e', bottom: '#ffe9cf' },   // 清晨
+    null,                                     // 正午：用主题 TC
+    { top: '#ff9d72', bottom: '#ffd9b3' },   // 黄昏
+    { top: '#2c3d6b', bottom: '#50639a' }    // 雪夜
+  ];
+  function dayNight(g, TC) {
+    var dayT = (((g.distance || 0) % 1600) / 1600) * 4;   // 0..4
+    var k = Math.floor(dayT) % 4, f = dayT - Math.floor(dayT);
+    // 相位边缘 20% 内做平滑过渡
+    f = f < 0.8 ? f / 0.8 : 1;
+    var c0 = DAY_PHASES[k] || { top: TC.skyTop, bottom: TC.skyBottom };
+    var c1 = DAY_PHASES[(k + 1) % 4] || { top: TC.skyTop, bottom: TC.skyBottom };
+    return {
+      top: mixHex(c0.top, c1.top, f),
+      bottom: mixHex(c0.bottom, c1.bottom, f),
+      night: (k === 3 ? f : (k === 2 ? 0 : 0)) * 0 + (k === 3 ? f : (k === 2 && f > 0 ? f * 0.3 : 0)),
+      phase: k, frac: f
+    };
+  }
+
   var COL = {
     skyTop: '#bfe7ff',
     skyBottom: '#ffeccf',
@@ -50,6 +83,7 @@
     this.t = 0;
     this.clouds = [];
     this.snow = [];
+    this.trail = [[], []];   // 空中拖尾采样：[猴0, 猴1] 各自的 {x,y,t}
     for (var i = 0; i < 60; i++) {
       this.snow.push({ x: Math.random() * 400, y: Math.random() * 700, r: 1 + Math.random() * 2.2, sp: 22 + Math.random() * 40, drift: Math.random() * 6.28 });
     }
@@ -82,22 +116,34 @@
       if (midX >= lvlArr[li].until) ti = Math.min(li + 1, lvlArr.length - 1);
     }
     var TC = themeMix(ti);
+    var dn = dayNight(g, TC);
     var sky = ctx.createLinearGradient ? ctx.createLinearGradient(0, 0, 0, H) : null;
     if (sky) {
-      sky.addColorStop(0, TC.skyTop);
-      sky.addColorStop(1, TC.skyBottom);
+      sky.addColorStop(0, dn.top);
+      sky.addColorStop(1, dn.bottom);
       ctx.fillStyle = sky;
     } else {
-      ctx.fillStyle = TC.skyTop;
+      ctx.fillStyle = dn.top;
     }
     ctx.fillRect(0, 0, W, H);
 
-    // 太阳（山顶档位被云遮住，画淡些）
-    ctx.globalAlpha = ti >= 4 ? 0.35 : 1;
-    ctx.fillStyle = COL.sun;
-    circle(ctx, 300, 92, 34);
-    ctx.globalAlpha = 0.25;
-    circle(ctx, 300, 92, 48);
+    // 太阳 / 月亮：随昼夜相位切换（黄昏同框淡出，夜晚换月牙）
+    var sunA = dn.phase === 3 ? 0 : (dn.phase === 2 ? 0.45 : (ti >= 4 ? 0.35 : 1));
+    if (sunA > 0) {
+      ctx.globalAlpha = sunA;
+      ctx.fillStyle = COL.sun;
+      circle(ctx, 300, 92, 34);
+      ctx.globalAlpha = sunA * 0.25;
+      circle(ctx, 300, 92, 48);
+    }
+    if (dn.phase === 3 || (dn.phase === 2 && dn.frac > 0.6)) {
+      var moonA = dn.phase === 3 ? 1 : (dn.frac - 0.6) / 0.4;
+      ctx.globalAlpha = moonA * 0.95;
+      ctx.fillStyle = '#f4f1e0';
+      circle(ctx, 300, 92, 26);
+      ctx.fillStyle = dn.top;   // 用天空色咬掉一块 = 月牙
+      circle(ctx, 310, 86, 22);
+    }
     ctx.globalAlpha = 1;
 
     // 云
@@ -701,6 +747,28 @@
       var m = g.monkeys[i];
       var isActive = g.active === i;
       var canOp = g.netMode ? (g.netMode === 'host' && g.seat === i && isActive) : isActive;
+
+      // ---- 跳跃拖尾：空中采样历史位置，先画残影再画本体 ----
+      var ctx = this.ctx;
+      var tr = this.trail[i];
+      if (!m.grounded && m.wetT <= 0) {
+        tr.push({ x: m.x, y: m.y - 20, t: t });
+        if (tr.length > 12) tr.shift();
+      } else {
+        if (tr.length) tr.length = 0;
+      }
+      for (var ti2 = 0; ti2 < tr.length - 1; ti2++) {
+        var sm = tr[ti2];
+        var age = t - sm.t;
+        if (age > 0.26) continue;
+        var al = 0.16 * (1 - age / 0.26);
+        ctx.globalAlpha = al;
+        ctx.fillStyle = i === 0 ? '#c68642' : '#d19a5e';
+        circle(ctx, sm.x, sm.y, 9);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+
       this._monkey(m, t, {
         idx: i,
         active: isActive,
