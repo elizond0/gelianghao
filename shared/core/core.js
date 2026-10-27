@@ -26,6 +26,7 @@
     MAX_POWER_MS: 1100,   // 蓄力慢一点，落点更好拿捏
     ROPE_REST: 150,
     PATIENCE: 5.5,      // 落水后挂在绳上能荡/被救的耐心时间（秒）
+    RESCUE_DELAY: 1.2,  // 落水后先荡这么久，B 才开始收绳钓人（保住"荡"的观感）
     CAM_LERP: 0.12,
     // ---- 面包和年糕式丰富（均不增加按键，仍只靠长按跳跃）----
     CP_SPACING: 260,      // 检查点旗间距（世界 px）
@@ -743,6 +744,7 @@
     m.vx = 0; m.vy = 0;
     m.grounded = false;
     m.wetT = CFG.PATIENCE;
+    m.wetRescueDelay = CFG.RESCUE_DELAY;
     this.combo = 0;
     m.squash = 0.7;
     this.shake = 0.6;
@@ -790,10 +792,10 @@
       var other = ms[1 - i];
       var ax = other.x, ay = other.y + 6;   // 锚点：伙伴身上
 
-      // 1) 力：重力 + 水面浮力（弹簧式，越深推得越狠）
+      // 1) 力：重力 + 浮力（只在水下生效：浸入越深往上推得越狠）
       m.vy += CFG.GRAVITY * dt;
-      var buoy = CFG.WATER_Y - 30 - m.y;
-      if (buoy > 0) m.vy -= buoy * 30 * dt;
+      var depth = m.y - (CFG.WATER_Y - 10);
+      if (depth > 0) m.vy -= depth * 30 * dt;
       m.vx *= 1 - Math.min(1, 1.1 * dt);    // 水平水阻
 
       m.x += m.vx * dt;
@@ -820,8 +822,11 @@
       m.vx *= 1 - Math.min(1, 0.5 * dt);
       m.vy *= 1 - Math.min(1, 0.9 * dt);
 
+      // 3.5) 刚落水先让他荡一会儿（RESCUE_DELAY），别一沾水就被钓上来
+      if (m.wetRescueDelay > 0) m.wetRescueDelay -= dt;
+
       // 4) 伙伴站稳在岸上 -> 慢慢收绳往上钓，够到平台就拉上来
-      if (other.grounded) {
+      if (other.grounded && m.wetRescueDelay <= 0) {
         var cur = Math.sqrt((m.x - ax) * (m.x - ax) + (m.y - ay) * (m.y - ay)) || 1;
         var reel = Math.min(1, dt * 1.8);
         var rx = (m.x - ax) / cur, ry = (m.y - ay) / cur;
