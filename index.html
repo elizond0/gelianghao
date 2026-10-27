@@ -26,6 +26,7 @@
     <div class="hud-right">
       <div class="pill coin"><span>¥</span><b id="hudCoin">0</b></div>
       <div class="pill fall" id="fallPill"><span class="k">掉落</span><b id="hudFalls">0</b></div>
+      <div class="pill time"><span class="k">用时</span><b id="hudTime">0:00</b></div>
       <div class="pill combo" id="comboPill"><span class="k">连击</span><b id="hudCombo">x0</b></div>
       <div class="pill" id="turnPill"><span class="k">轮到</span><b id="hudTurn">你</b></div>
     </div>
@@ -79,6 +80,7 @@
     </div>
     <div class="btns">
       <button class="btn primary" id="btnSolo">单机开跳</button>
+      <button class="btn daily" id="btnDaily">每日挑战 🏔️</button>
       <button class="btn" id="btnRoom">微信/好友联机</button>
       <button class="btn ghost" id="btnHow">怎么玩？</button>
     </div>
@@ -125,7 +127,7 @@
       <div><b id="ovCombo">0</b><span>最高连击</span></div>
       <div><b id="ovFalls">0</b><span>掉落回档</span></div>
     </div>
-    <p class="best-line">历史最高 <b id="ovBest">0</b> 分</p>
+    <p class="best-line">用时 <b id="ovTime">0:00</b> · 历史最高 <b id="ovBest">0</b> 分</p>
     <div class="btns">
       <button class="btn primary" id="btnAgain">再来一局</button>
       <button class="btn ghost" id="btnHome">回首页</button>
@@ -145,6 +147,11 @@
       <li><b>金香蕉</b>：挂得更高的金色香蕉，+50 分，看见了就跳高一点去够。</li>
       <li><b>蓝色小旗是存档点</b>：双落水后从最近的旗子接着跳，分数保留；同一面旗连掉 3 次才真结算。</li>
       <li><b>荡绳助力</b>：后面的猴子吊在绷紧的绳上会被往前荡，借力能跳过单跳够不着的坑。</li>
+      <li><b>移动浮台</b>：木牌浮台左右巡逻，跟着它一起动，落点要留提前量。</li>
+      <li><b>弹跳蘑菇</b>：红伞蘑菇踩上去自动弹起（约满蓄力力度），连击不清零，是免费的顺风车。</li>
+      <li><b>山口阵风</b>：看到风牌和白色风线，空中会被吹——多蓄一点或少蓄一点抵消漂移；落了地就没风。</li>
+      <li><b>越往山上越冷</b>：过碎石坡、翻雪线，山顶是暴风雪，风更狠；看看你俩能爬多高。</li>
+      <li><b>每日挑战</b>：每天固定一座山，全球同图，比谁爬得远、用时短。</li>
       <li><b>联机</b>：你俩各控一只猴子，轮流接力，一起把分数做高。</li>
     </ul>
     <button class="btn primary" id="btnHowBack">知道了</button>
