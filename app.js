@@ -824,6 +824,7 @@
   // ---------------- 启动 ----------------
   var mRoom = location.search.match(/[?&]room=(\d{4})/);
   $('bestScore').textContent = localStorage.getItem('glh_best') || 0;
+  if ($('verText')) $('verText').textContent = Core.VERSION || '';
   newGame();
   fit();
   if (mRoom) {
