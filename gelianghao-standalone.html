@@ -673,7 +673,7 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
 <script>
 /* eslint-disable */
 /* 哥俩好 · 网页端单文件打包产物 —— 由 scripts/build-web-bundle.js 自动生成，请勿手改 */
-/* 生成时间：2026-10-27T06:24:32.096Z */
+/* 生成时间：2026-10-27T06:33:39.234Z */
 (function () {
   'use strict';
   var __mods = {};
@@ -2581,23 +2581,43 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
     // 眼睛（左右严格对称）。
     // 注意：circle() 内部会 beginPath()，连续调两次再 fill() 会把第一只眼睛的路径冲掉
     // —— 这就是之前"只剩一只右眼"的原因。必须每只眼睛单独 buildPath + fill。
-    var blink = (m.blink % 3.4) > 3.25;
+    // ---- 微表情 ----
+    // 眨眼节奏随机化：每只猴周期不同（3.1~4.5s），且每第 4 个周期改成"双连眨"
+    var bc = 3.1 + ((st.idx * 0.77) % 1.4);
+    var ph = m.blink % bc;
+    var nth = Math.floor(m.blink / bc);
+    var blinking = ph > bc - 0.14;
+    if (nth % 4 === 3) {
+      blinking = (ph > bc - 0.34 && ph < bc - 0.2) || ph > bc - 0.14;
+    }
+    // 蓄力时瞪大眼（专注），瞳孔和高光一起放大
+    var er = st.charging ? 3.4 : 2.7;
+    var hl = st.charging ? 1.25 : 0.95;
     ctx.fillStyle = COL.ink;
     if (st.stun) {
       ctx.lineWidth = 2;
       ctx.strokeStyle = COL.ink;
       cross(ctx, -4.6, -8, 2.6); cross(ctx, 4.6, -8, 2.6);
-    } else if (blink) {
+    } else if (blinking) {
       ctx.fillRect(-7, -8.8, 4.6, 1.8);
       ctx.fillRect(2.4, -8.8, 4.6, 1.8);
     } else {
       [-4.6, 4.6].forEach(function (ex) {
-        ctx.beginPath(); ctx.arc(ex, -8, 2.7, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(ex, -8, er, 0, Math.PI * 2); ctx.fill();
       });
       ctx.fillStyle = '#fff';
       [-5.4, 3.8].forEach(function (ex) {
-        ctx.beginPath(); ctx.arc(ex, -9, 0.95, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(ex, -9, hl, 0, Math.PI * 2); ctx.fill();
       });
+      if (st.charging) {
+        // 蓄力挑眉：两道小弧线，"我憋足了劲"的表情
+        ctx.strokeStyle = '#6b4a2c';
+        ctx.lineWidth = 1.8;
+        ctx.lineCap = 'round';
+        [-4.6, 4.6].forEach(function (ex) {
+          ctx.beginPath(); ctx.arc(ex, -12.6, 3.2, Math.PI, Math.PI * 2); ctx.stroke();
+        });
+      }
     }
 
     // 嘴
@@ -2606,6 +2626,7 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
     ctx.beginPath();
     if (st.wet) { ctx.arc(0, 2, 3.4, 0, Math.PI * 2); }
     else if (st.charging) { ctx.arc(0, 0, 2.6, 0, Math.PI * 2); }
+    else if (!m.grounded) { ctx.arc(0, -0.5, 2.8, 0, Math.PI * 2); }   // 空中：张嘴"哇"
     else { ctx.arc(0, -1, 4, 0.25 * Math.PI, 0.75 * Math.PI); }
     ctx.stroke();
 
