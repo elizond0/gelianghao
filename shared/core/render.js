@@ -165,7 +165,7 @@
     var windAll = 0;
     for (var i = 0; i < (g.winds || []).length; i++) {
       var w = g.winds[i];
-      if (g.camX + CFG.W / 2 >= w.x0 && g.camX + CFG.W / 2 <= w.x1) windAll = w.fx;
+      if (g.camX + CFG.W / 2 >= w.x0 && g.camX + CFG.W / 2 <= w.x1) windAll = w.fx * (g._gustAt ? g._gustAt(w) : 1);
     }
     ctx.fillStyle = 'rgba(255,255,255,0.85)';
     var n = Math.round(this.snow.length * amt);
@@ -349,8 +349,11 @@
       var wl = Math.max(wnd.x0, left), wr = Math.min(wnd.x1, right);
       if (wr <= wl) continue;
       var dirw = wnd.fx >= 0 ? 1 : -1;
+      // 风线强度跟随阵风节律：停风时风线消失（和实际受力一致，不然玩家被画面骗）
+      var gust = g._gustAt ? g._gustAt(wnd) : 1;
+      if (gust <= 0.02) continue;
       ctx.save();
-      ctx.globalAlpha = 0.3;
+      ctx.globalAlpha = 0.12 + 0.26 * gust;
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = 2;
       for (var ln = 0; ln < 8; ln++) {
