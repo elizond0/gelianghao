@@ -504,3 +504,13 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
   from { opacity: 0; transform: translateY(14px) scale(.8); }
   to   { opacity: 1; transform: none; }
 }
+
+/* ---- 可滚动页布局修正 ----
+   .screen 默认 justify-content:center，内容超高时上下同时被裁，
+   底部按钮（如"知道了"）就会错乱。滚动页改顶部对齐 + 留出安全底距 */
+.screen.scrollable {
+  justify-content: flex-start;
+  padding-bottom: calc(30px + env(safe-area-inset-bottom));
+}
+.screen.scrollable > .btn { flex-shrink: 0; margin-top: 10px; }
+.screen.scrollable > h2 { flex-shrink: 0; }
