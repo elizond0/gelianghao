@@ -644,6 +644,10 @@
       if (otherReady) { this._lastSwitch = this.time; this.setActive(1 - this.active); }
       return;
     }
+    // ⓪ 正在蓄力的这一棒绝不抢：pressEnd 只作用于 active 猴，
+    //    蓄力中途换手会让松手落空 / 力度算到别人头上，
+    //    表现为"两只猴差距一大就顺序错乱、跳不出去"（④ 每帧都想交棒给落后那只）
+    if (cur.charging) return;
     // ② 还没起跳过（刚开局），或这一棒还在空中 → 保持
     if (!cur.hasJumped) return;
     if (!otherReady) return;
@@ -807,7 +811,10 @@
     // 改成作用在速度上（限幅），手感更可预测。
     if (!a.grounded && !b.grounded && a.wetT <= 0 && b.wetT <= 0 && over > 0) {
       var nx = dx / d, ny = dy / d;
-      var pull = Math.min(over * 6, 260) * dt;
+      // 两猴差距远超绳长（接力落后好几块平台）时按"绳子松垮"处理：
+      // 只保留近距离的纠缠手感，否则回拽会把前猴的跳跃整个拖垮
+      var eff = Math.min(over, 150);
+      var pull = Math.min(eff * 6, 260) * dt;
       a.vx += nx * pull; a.vy += ny * pull;
       b.vx -= nx * pull; b.vy -= ny * pull;
 
@@ -819,8 +826,8 @@
       // 后排猴下落时会被往后推，与"接力前进"的玩法相悖，已修正。
       var lower = a.y >= b.y ? a : b;
       if (lower.vy > 0 && over > 6) {
-        lower.vy -= Math.min(over * CFG.SWING_LIFT, 110) * dt;
-        lower.vx += Math.min(over * 1.2, 110) * dt;
+        lower.vy -= Math.min(eff * CFG.SWING_LIFT, 110) * dt;
+        lower.vx += Math.min(eff * 1.2, 110) * dt;
       }
     }
 
