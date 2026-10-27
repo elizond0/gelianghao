@@ -327,33 +327,92 @@
   Renderer.prototype._slabPillars = function (p, bottom, col, topCol, slabH, grassTop) {
     var ctx = this.ctx;
     var pn = p.w >= 110 ? 3 : 2;
-    ctx.fillStyle = COL.dirtDark;
+    var top = p.y;
+
+    // ---- 柱子（先画，垫在石板后面）----
     for (var pi = 0; pi < pn; pi++) {
       var px = p.x + (p.w / pn) * (pi + 0.5) - 9;
-      ctx.fillRect(px, p.y + slabH - 4, 18, bottom - p.y - slabH + 4);
+      var pw = 18;
+      var py = top + slabH - 6;
+      var ph = bottom - py;
+      // 柱身：左亮右暗的横向渐变 = 圆柱感
+      var pg = ctx.createLinearGradient(px, 0, px + pw, 0);
+      pg.addColorStop(0, '#8a5f3d');
+      pg.addColorStop(0.35, '#a5744a');
+      pg.addColorStop(1, '#5f3f28');
+      ctx.fillStyle = pg;
+      ctx.fillRect(px, py, pw, ph);
+      // 柱帽：比柱身略宽的石头横条
+      ctx.fillStyle = '#937053';
+      roundRect(ctx, px - 3, py, pw + 6, 7, 3);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.22)';
+      roundRect(ctx, px - 3, py, pw + 6, 2.6, 2);
+      ctx.fill();
+      // 柱底入水渐隐：水色盖住柱脚，柱子像真的插进水里
+      var fadeH = 16;
+      var fg = ctx.createLinearGradient(0, bottom - fadeH, 0, bottom);
+      fg.addColorStop(0, 'rgba(122,180,225,0)');
+      fg.addColorStop(1, 'rgba(122,180,225,0.75)');
+      ctx.fillStyle = fg;
+      ctx.fillRect(px - 2, bottom - fadeH, pw + 4, fadeH);
     }
-    ctx.fillStyle = col;
-    roundRect(ctx, p.x, p.y, p.w, slabH, 8);
+
+    // ---- 石板（顶面亮、下缘暗的厚度感）----
+    var bg = ctx.createLinearGradient(0, top, 0, top + slabH);
+    bg.addColorStop(0, '#c49a6c');
+    bg.addColorStop(0.55, col);
+    bg.addColorStop(1, '#7c5636');
+    ctx.fillStyle = bg;
+    roundRect(ctx, p.x, top, p.w, slabH, 8);
     ctx.fill();
+    // 砖缝：斜浅线点缀"石板拼接"感
+    ctx.strokeStyle = 'rgba(0,0,0,0.14)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    var seams = Math.max(1, Math.round(p.w / 56));
+    for (var si = 1; si <= seams; si++) {
+      var sx = p.x + (p.w / (seams + 1)) * si;
+      ctx.moveTo(sx - 3, top + 5);
+      ctx.lineTo(sx + 3, top + slabH - 3);
+    }
+    ctx.stroke();
+
     if (grassTop) {
+      // 草皮：包住石板上沿 + 底部垂坠弧（像盖上去的一层毯子）
+      var gh = 15;
       ctx.fillStyle = COL.grass;
-      roundRect(ctx, p.x, p.y - 2, p.w, 16, 8);
+      roundRect(ctx, p.x - 2, top - 3, p.w + 4, gh, 9);
       ctx.fill();
+      ctx.fillStyle = COL.grass;
+      var dropN = Math.floor(p.w / 22);
+      for (var di = 0; di < dropN; di++) {
+        var dx = p.x + 8 + di * 22;
+        ctx.beginPath();
+        ctx.arc(dx, top + gh - 6, 4.5, 0, Math.PI);
+        ctx.fill();
+      }
+      // 顶面高光
       ctx.fillStyle = COL.grassLight;
-      roundRect(ctx, p.x + 2, p.y - 2, p.w - 4, 7, 4);
+      roundRect(ctx, p.x + 1, top - 3, p.w - 2, 6.5, 4);
       ctx.fill();
+      // 草尖
       ctx.fillStyle = COL.grass;
       for (var j = 0; j < Math.floor(p.w / 16); j++) {
         var gx = p.x + 8 + j * 16;
         ctx.beginPath();
-        ctx.moveTo(gx, p.y);
-        ctx.lineTo(gx + 3, p.y - 9);
-        ctx.lineTo(gx + 6, p.y);
+        ctx.moveTo(gx, top - 2);
+        ctx.lineTo(gx + 3, top - 11);
+        ctx.lineTo(gx + 6, top - 2);
         ctx.fill();
       }
     } else {
+      // 冰台：顶部亮冰层 + 冷光边
       ctx.fillStyle = topCol;
-      roundRect(ctx, p.x, p.y, p.w, 8, 6);
+      roundRect(ctx, p.x - 1, top - 2, p.w + 2, 9, 6);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.5)';
+      roundRect(ctx, p.x + 2, top - 2, p.w - 4, 3, 2);
       ctx.fill();
     }
   };
@@ -690,10 +749,13 @@
     circles(ctx, [-15, -12, 4, 15, -12, 4]);
     ctx.fill();
 
-    // 头
+    // 头（加一圈深棕描边，立绘感）
     ctx.fillStyle = body;
     circle(ctx, 0, -8, 17);
     ctx.fill();
+    ctx.strokeStyle = '#6b4a2c';
+    ctx.lineWidth = 2;
+    ctx.stroke();
 
     // 脸
     ctx.fillStyle = face;
@@ -744,10 +806,43 @@
     circles(ctx, [-10, 0, 3.2, 10, 0, 3.2]);
     ctx.fill();
 
-    // 身体
-    ctx.fillStyle = body;
+    // 尾巴：身后翘起的卷尾（先画，垫在身体后面）
+    ctx.strokeStyle = body;
+    ctx.lineWidth = 4.5;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(7, 22);
+    ctx.quadraticCurveTo(21, 26, 23, 14);
+    ctx.quadraticCurveTo(24, 7, 18.5, 8);
+    ctx.stroke();
+    ctx.strokeStyle = '#6b4a2c';
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+
+    // 身体（顶部受光的径向渐变 + 深棕描边）
+    var hi = st.idx === 0 ? '#e2a866' : '#eec28a';
+    var bgd = ctx.createRadialGradient(-3, 12, 3, 0, 18, 16);
+    bgd.addColorStop(0, hi);
+    bgd.addColorStop(1, body);
+    ctx.fillStyle = bgd;
     ctx.beginPath();
     if (ctx.ellipse) ctx.ellipse(0, 18, 12, 13, 0, 0, Math.PI * 2); else ctx.arc(0, 18, 12, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#6b4a2c';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // 围巾：猴哥红 / 二猴蓝（联机一眼分清谁是谁）
+    var scarf = st.idx === 0 ? '#e0524d' : '#4a90d9';
+    ctx.fillStyle = scarf;
+    roundRect(ctx, -8, 7, 16, 5.5, 2.5);
+    ctx.fill();
+    var flutter = Math.sin(t * 6 + st.idx * 2) * 2;
+    ctx.beginPath();
+    ctx.moveTo(-6, 8.5);
+    ctx.lineTo(-14 - flutter, 11.5);
+    ctx.lineTo(-12.5, 15);
+    ctx.closePath();
     ctx.fill();
     ctx.fillStyle = face;
     ctx.beginPath();
