@@ -1,0 +1,4459 @@
+/* eslint-disable */
+/* 哥俩好 · 网页端单文件打包产物 —— 由 scripts/build-web-bundle.js 自动生成，请勿手改 */
+/* 生成时间：2026-10-26T14:24:42.568Z */
+(function () {
+  'use strict';
+  var __mods = {};
+  var __cache = {};
+  function __def(p, fn) { __mods[p] = fn; }
+  function __req(p) {
+    if (__cache[p]) return __cache[p].exports;
+    var fn = __mods[p];
+    if (!fn) throw new Error('[bundle] 模块未找到: ' + p);
+    var mod = { exports: {} };
+    __cache[p] = mod;            // 先占位，防循环依赖
+    fn(__req, mod, mod.exports);
+    return mod.exports;
+  }
+  // app.js 用 require.boot(DEPS, cb) 启动；bundle 里模块随用随取，直接回调
+  __req.boot = function (deps, main) { if (main) main(__req); };
+  __req.__glhBundle = true;
+  window.require = __req;
+
+  __def('/shared/core/core.js', function (require, module, exports) {
+/**
+ * 哥俩好 · 游戏内核（纯逻辑，无渲染 / 无平台 API）
+ * 网页版与微信小程序共用同一份文件。
+ *
+ * 玩法：
+ *  - 两只猴子被一根有弹性的绳子拴在一起，一前一后。
+ *  - 有<箭头>的那只可起跳：按住蓄力，松手起跳，按得越久跳得越远（受绳子长度限制）。
+ *  - 一只掉进坑里不会立刻输：另一只往前跳 / 站稳在岸上，就能把它从坑里"钓"上来。
+ *  - 两只同时落水 -> 本局结束。
+ */
+(function (root, factory) {
+  var core = factory();
+  if (typeof module === 'object' && module.exports) module.exports = core;
+  root.GLHCore = core;
+})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  'use strict';
+
+  var CFG = {
+    W: 375,
+    H: 667,
+    GROUND_Y: 470,
+    GRAVITY: 1250,
+    MIN_JUMP: 24,
+    JUMP_RANGE: 150,      // 满蓄力相对最小跳多飞 150px：要覆盖后期最大 gap(185) - 平台半宽
+    MAX_POWER_MS: 1100,   // 蓄力慢一点，落点更好拿捏
+    ROPE_REST: 150,
+    PATIENCE: 1.5,
+    CAM_LERP: 0.12,
+    // ---- 面包和年糕式丰富（均不增加按键，仍只靠长按跳跃）----
+    CP_SPACING: 260,      // 检查点旗间距（世界 px）
+    PERFECT_RATIO: 0.16,  // 落点距平台中心 < 宽*此值 算完美着陆
+    PERFECT_BONUS: 15,    // 完美着陆基础分
+    COMBO_BONUS: 15,      // 连击 >=3 时每跳追加
+    GOLD_CHANCE: 0.13,    // 金香蕉生成概率（挂在跳跃顶点高度，要跳起来才吃得到）
+    GOLD_BONUS: 50,
+    SWING_LIFT: 2.6,      // 绳子绷紧且下方那只下落时，把它往上悠的加速度系数
+    MAX_FALLS_PER_CP: 3,  // 同一检查点连续坠落 3 次 -> 判定卡关，结算（防焊死）
+    BOTH_WET_DELAY: 0.9   // 双落水后停顿这么久再回检查点/结算（给"完蛋感"留表演时间）
+  };
+
+  var LEVELS = [
+    { until: 900,  gapMin: 55,  gapMax: 105, platMin: 80,  platMax: 128, obs: 0,    spike: false, ice: false },
+    { until: 2000, gapMin: 70,  gapMax: 130, platMin: 70,  platMax: 118, obs: 0.35, spike: false, ice: false },
+    { until: 3400, gapMin: 85,  gapMax: 155, platMin: 64,  platMax: 108, obs: 0.55, spike: true,  ice: false },
+    { until: 5200, gapMin: 90,  gapMax: 152, platMin: 58,  platMax: 100, obs: 0.7,  spike: true,  ice: true  },
+    { until: 1e9,  gapMin: 95,  gapMax: 162, platMin: 54,  platMax: 96,  obs: 0.85, spike: true,  ice: true  }
+  ];
+
+  // 抛射参数：水平 vx 决定落点，竖直 vy 决定弧高（蓄力越大跳得越高）
+  CFG.JUMP_VX = 2.6;
+  CFG.JUMP_VY = 3.1;
+
+  function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
+  function lerp(a, b, t) { return a + (b - a) * t; }
+
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = a + 0x6D2B79F5 | 0;
+      var t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+
+  function levelAt(x) {
+    for (var i = 0; i < LEVELS.length; i++) if (x < LEVELS[i].until) return LEVELS[i];
+    return LEVELS[LEVELS.length - 1];
+  }
+
+  function Monkey(idx) {
+    this.idx = idx;
+    this.x = 0;
+    this.y = 0;
+    this.vx = 0;
+    this.vy = 0;
+    this.grounded = true;
+    this.charging = false;
+    this.chargeT = 0;
+    this.power = 0;
+    this.squash = 1;
+    this.wetT = 0;
+    this.stunT = 0;
+    this.hasJumped = false;   // 本局是否真正起跳过（开局不换人用）
+    this.progressX = 0;       // 它自己已经推进到的最远落点：落后的一方一定推进得少
+    this.blink = Math.random() * 3;
+  }
+
+  function Game(opts) {
+    opts = opts || {};
+    this.seed = opts.seed || 1;
+    this.onEvent = opts.onEvent || function () {};
+    this.reset();
+  }
+
+  Game.prototype.emit = function (type, data) { this.onEvent(type, data || {}); };
+
+  Game.prototype.reset = function () {
+    this.netMode = null;
+    this.seat = 0;
+    this.rng = mulberry32(this.seed);
+    this.time = 0;
+    this.state = 'ready';
+    this.distance = 0;
+    this.maxX = 0;
+    this.coins = 0;
+    this.rescues = 0;
+    this.score = 0;
+    // 面包和年糕式新状态
+    this.checkpoints = [];    // [{x, passed}] 位置由种子决定，两端一致
+    this._nextCPX = 200 + CFG.CP_SPACING;
+    this._lastCPIdx = -1;     // 最后越过的检查点下标
+    this.falls = 0;           // 累计回检查点次数
+    this.fallsSinceCP = 0;    // 当前检查点上已坠落几次（防卡关）
+    this.combo = 0;           // 当前完美连击
+    this.bestCombo = 0;
+    this.perfects = 0;
+    this.golds = 0;
+    this.bonus = 0;           // 完美/金香蕉累加分
+    this._bothWetT = 0;       // 双落水计时
+    this.camX = -100;
+    this.shake = 0;
+    this.platforms = [];
+    this.obstacles = [];
+    this.pickups = [];
+    this.decos = [];
+    this.particles = [];
+    this.floatTexts = [];
+
+    // 起始平台：右边留出足够"助跑距离"，否则两只猴满蓄力都够不着下一块地
+    this.platforms.push({ x: -260, w: 470, y: CFG.GROUND_Y, type: 'start' });
+    this._genUntil(1600);
+
+    this.monkeys = [new Monkey(0), new Monkey(1)];
+    this.monkeys[0].x = 200;
+    this.monkeys[1].x = 148;
+    this.monkeys[0].y = this.monkeys[1].y = CFG.GROUND_Y;
+    this.monkeys[0].progressX = this.monkeys[0].x;
+    this.monkeys[1].progressX = this.monkeys[1].x;
+    this.active = 1;
+    this._lastSwitch = -1;
+    this._autoSince = 0;
+    this._lastCmdSeq = 0;
+    this.netMode = null;
+    this.seat = 0;
+    this.cmdQueue = [];
+    this.state = 'ready';
+    this.begun = false;
+  };
+
+  Game.prototype.start = function () {
+    this.state = 'playing';
+    this.begun = true;
+    if (this.netMode) {
+      // 联机：开局先轮到房主，避免"第一个人没事干"
+      this.active = this.seat;
+      this.emit('switch', { idx: this.active });
+    }
+    this.emit('start');
+  };
+
+  // 真正开跳了没有（联机里用来区分"开房等好友"和"正在玩"）
+  Game.prototype.hasBegun = function () {
+    return this.state === 'playing' || this.state === 'over';
+  };
+
+  Game.prototype.setActive = function (i, silent) {
+    if (this.active === i) return false;
+    this.active = i;
+    if (!silent) this.emit('switch', { idx: i });
+    return true;
+  };
+
+  // ---------- 地形生成 ----------
+  Game.prototype._genUntil = function (targetX) {
+    var last = this.platforms[this.platforms.length - 1];
+    var guard = 0;
+    while (last.x + last.w < targetX && guard++ < 200) {
+      var L = levelAt(last.x + last.w);
+      var r = this.rng;
+      var gap = Math.round(lerp(L.gapMin, L.gapMax, r()));
+      var pw = Math.round(lerp(L.platMin, L.platMax, r()));
+      var y = CFG.GROUND_Y + Math.round((r() * 2 - 1) * 10);
+      var p = { x: last.x + last.w + gap, w: pw, y: y, type: 'normal' };
+      if (L.ice && r() < 0.22) p.type = 'ice';
+
+      if (r() < L.obs && pw > 86) {
+        this.obstacles.push({
+          kind: r() < 0.55 ? 'bear' : 'piranha',
+          x: Math.round(p.x + pw * (0.4 + r() * 0.25)),
+          y: y, w: 26, h: 26, dead: false
+        });
+      }
+      if (L.spike && r() < 0.28 && pw > 80) {
+        this.obstacles.push({ kind: 'spike', x: Math.round(p.x + pw * 0.55), y: y, w: 22, h: 12, dead: false });
+      }
+      if (r() < 0.7 && pw > 84) this.pickups.push({ x: Math.round(p.x + pw * 0.5), y: y - 48, taken: false, t: r() * 6 });
+      if (r() < 0.45) this.pickups.push({ x: Math.round(p.x + pw * 0.78), y: y - 82, taken: false, t: r() * 6 });
+      // 金香蕉：稀有，挂在跳跃顶点附近的高度——必须跳起来才吃得到（风险回报）
+      if (r() < CFG.GOLD_CHANCE && pw > 90) {
+        this.pickups.push({ x: Math.round(p.x + pw * 0.5), y: y - 104, taken: false, t: r() * 6, gold: true });
+      }
+      // 检查点旗：间距 CP_SPACING，挂在"够到目标点的第一块够宽平台"上。
+      // 旗面 x 吸附到平台内（留 20px 边距），不掉坑里、不挂墙外。
+      // 早先要求平台正好盖住固定网格点，目标点一落进坑/窄台这面旗就永久刷不出，
+      // 且 _nextCPX 不前进会把后面所有旗一起堵死（整局无存档点），已修正。
+      if (this._nextCPX >= 0 && p.x + p.w >= this._nextCPX && pw >= 64) {
+        var flagX = clamp(Math.round(this._nextCPX), p.x + 20, p.x + p.w - 20);
+        this.checkpoints.push({ x: flagX, passed: false });
+        this._nextCPX += CFG.CP_SPACING;
+      }
+
+      for (var d = 0; d < 2; d++) {
+        this.decos.push({ x: Math.round(p.x + r() * pw), y: y, kind: r() < 0.5 ? 'tree' : 'bush', s: 0.7 + r() * 0.6 });
+      }
+      this.platforms.push(p);
+      last = p;
+    }
+    var cut = this.camX - 700;
+    if (this.platforms.length > 10) {
+      this.platforms = this.platforms.filter(function (p) { return p.x + p.w > cut; });
+      this.obstacles = this.obstacles.filter(function (o) { return o.x > cut; });
+      this.pickups = this.pickups.filter(function (o) { return o.x > cut; });
+      this.decos = this.decos.filter(function (o) { return o.x > cut; });
+    }
+  };
+
+  Game.prototype.platformAt = function (x) {
+    var ps = this.platforms;
+    for (var i = ps.length - 1; i >= 0; i--) {
+      if (x >= ps[i].x && x <= ps[i].x + ps[i].w) return ps[i];
+    }
+    return null;
+  };
+
+  Game.prototype.nextPlatform = function (x) {
+    var best = null;
+    for (var i = 0; i < this.platforms.length; i++) {
+      var p = this.platforms[i];
+      if (p.x > x && (!best || p.x < best.x)) best = p;
+    }
+    return best;
+  };
+
+  Game.prototype._surfaceNear = function (x, fallbackY) {
+    var best = null, bd = 1e9;
+    for (var i = 0; i < this.platforms.length; i++) {
+      var p = this.platforms[i];
+      var d = x < p.x ? p.x - x : (x > p.x + p.w ? x - (p.x + p.w) : 0);
+      if (d < bd) { bd = d; best = p; }
+    }
+    return best ? best.y : fallbackY;
+  };
+
+  Game.prototype.ropeRest = function () {
+    return CFG.ROPE_REST + Math.min(36, this.distance * 0.02);
+  };
+
+  // ---------- 输入 ----------
+  Game.prototype.canIOperate = function () {
+    if (!this.netMode) return true;
+    // 联机时：轮到我这只（seat 对应）就可以起跳；主机负责执行、客人负责把操作发上去
+    return this.seat === this.active;
+  };
+
+  Game.prototype.pressStart = function () {
+    if (this.state === 'ready') { this.start(); return; }
+    if (this.state !== 'playing') return;
+    if (!this.canIOperate()) return;
+    var m = this.monkeys[this.active];
+    if (!m.grounded || m.stunT > 0 || m.wetT > 0) return;
+    m.charging = true;
+    m.chargeT = 0;
+    this.lastOpOut = { t: 'down', m: m.idx };
+  };
+
+  Game.prototype.pressEnd = function () {
+    if (this.state === 'ready') { this.start(); return; }
+    if (this.state !== 'playing') return;
+    if (!this.canIOperate()) return;
+    var m = this.monkeys[this.active];
+    if (!m.charging) return;
+    m.charging = false;
+    this._launch(m, m.chargeT / (CFG.MAX_POWER_MS / 1000));
+    this.lastOpOut = { t: 'up', m: this.active, p: m.power };
+    this.emit('jump', { idx: m.idx, power: m.power, from: m.x });
+  };
+
+  Game.prototype._launch = function (m, t) {
+    t = clamp(t, 0, 1);
+    m.power = t;
+    var dist = CFG.MIN_JUMP + t * CFG.JUMP_RANGE;
+    m.vx = dist * CFG.JUMP_VX;
+    m.vy = -dist * CFG.JUMP_VY;
+    m.grounded = false;
+    m.squash = 0.78;
+    m.hasJumped = true;
+    this.active = m.idx;
+    this._lastSwitch = this.time;
+  };
+
+  Game.prototype.chargeFor = function (dist) {
+    return clamp((dist - CFG.MIN_JUMP) / CFG.JUMP_RANGE, 0, 1) * CFG.MAX_POWER_MS / 1000;
+  };
+
+  // 落点预测：和 update() 里的物理保持一致（含水平空气阻尼），否则瞄准线会骗人
+  // 水平：vx(t) = vx0 * e^(-DRAG*t)  →  x(t) = x0 + vx0 * (1 - e^(-DRAG*t)) / DRAG
+  // 竖直：y(t) = y0 + vy0*t + 0.5*G*t^2（无阻尼）
+  var DRAG = 0.25;
+  Game.prototype.projectLanding = function (fromX, power, fromY) {
+    var dist = CFG.MIN_JUMP + clamp(power, 0, 1) * CFG.JUMP_RANGE;
+    var vx = dist * CFG.JUMP_VX, vy = -dist * CFG.JUMP_VY;
+    var drop = Math.max(0, (fromY || CFG.GROUND_Y) - CFG.GROUND_Y);
+    var t = (-vy + Math.sqrt(vy * vy + 2 * CFG.GRAVITY * drop)) / CFG.GRAVITY;
+    var travel = vx * (1 - Math.exp(-DRAG * t)) / DRAG;
+    return fromX + travel;
+  };
+
+  Game.prototype.chargeRatio = function () {
+    var m = this.monkeys[this.active];
+    if (!m || !m.charging) return 0;
+    return clamp(m.chargeT / (CFG.MAX_POWER_MS / 1000), 0, 1);
+  };
+
+  // ---------- 主循环 ----------
+  Game.prototype.update = function (dt) {
+    if (this.state === 'ready' || this.state === 'paused') { this._ambient(dt); return; }
+    if (this.state === 'over') { this._fx(dt); return; }
+
+    dt = Math.min(dt, 1 / 30);
+    this.time += dt;
+    var ms = this.monkeys;
+
+    for (var i = 0; i < 2; i++) {
+      var m = ms[i];
+      if (m.charging) { m.chargeT += dt; m.squash = 1 - clamp(m.chargeT / 0.9, 0, 1) * 0.24; }
+      if (m.stunT > 0) m.stunT -= dt;
+      if (m.wetT > 0) m.wetT -= dt;
+      m.blink += dt;
+
+      if (!m.grounded && m.wetT <= 0) {
+        m.vy += CFG.GRAVITY * dt;
+        var prevX = m.x, prevY = m.y;
+        m.x += m.vx * dt;
+        m.y += m.vy * dt;
+        if (m.vy > 0) {
+          var hit = this._crossedSurface(prevX, prevY, m.x, m.y);
+          if (hit) this._land(m, hit);
+          else if (!this.platformAt(m.x) && m.y > CFG.GROUND_Y + 14) this._wet(m);
+        }
+        if (!m.grounded) m.vx *= (1 - 0.25 * dt);
+      }
+    }
+
+    this._rope(dt);
+    this._obstacles();
+    this._pickups(dt);
+
+    var lead = Math.max(ms[0].x, ms[1].x);
+    if (lead > this.maxX) {
+      this.maxX = lead;
+      this.distance = Math.max(0, Math.floor((this.maxX - 200) / 2.2));
+    }
+    this.score = this.distance + this.coins * 10 + this.rescues * 30 + this.bonus;
+
+    this._updateCamera(CFG.CAM_LERP);
+
+    if (this.netMode) {
+      this._net();
+      this._rescueStalledTurn();   // 好友掉线/卡住时，别让整局停住
+    }
+    this._autoSwitch();     // 单人/联机都跑，保证接力轮换节奏一致（联机端由房主权威决定）
+
+    this._genUntil(this.camX + CFG.W * 2);
+    this._ambient(dt);
+    this._fx(dt);
+    if (this.shake > 0) this.shake = Math.max(0, this.shake - dt * 3);
+
+    // 双落水不再一掉到底：给 0.9s 表演时间，然后回检查点或结算
+    var bothWet = ms[0].wetT > 0 && ms[1].wetT > 0;
+    if (bothWet) {
+      this._bothWetT += dt;
+      if (this._bothWetT >= CFG.BOTH_WET_DELAY) this._onBothWet();
+    } else if (this._bothWetT > 0) {
+      this._bothWetT = 0;
+    }
+
+    // 检查点打卡：最远到达越过旗面就算
+    for (var ci = 0; ci < this.checkpoints.length; ci++) {
+      var cp = this.checkpoints[ci];
+      if (cp.passed || this.maxX < cp.x) continue;
+      cp.passed = true;
+      this._lastCPIdx = ci;
+      this.fallsSinceCP = 0;
+      var cpy = this._surfaceNear(cp.x, CFG.GROUND_Y);
+      this._float(cp.x, cpy - 100, '检查点！', '#1864ab');
+      this._burst(cp.x, cpy - 56, 10, '#74c0fc');
+      this.emit('checkpoint', { x: cp.x });
+    }
+  };
+
+  Game.prototype._crossedSurface = function (x0, y0, x1, y1) {
+    for (var i = 0; i < this.platforms.length; i++) {
+      var p = this.platforms[i];
+      if (y0 <= p.y + 1.5 && y1 >= p.y) {
+        var xa = Math.min(x0, x1), xb = Math.max(x0, x1);
+        if (xb >= p.x && xa <= p.x + p.w) return p;
+      }
+    }
+    return null;
+  };
+
+  // 换人规则（单人/联机共用，保证"接力"节奏一致）：
+  // 目标：两只像接力一样轮流往前挪，落后的那只优先被"带上来"，且绝不来回横跳。
+  // 1) 当班猴落水/晕住 + 另一只稳稳站岸 → 立刻换人去救
+  // 2) 这一棒还没落地 / 还没起跳过 → 保持，等它跳完
+  // 3) 跳完落地 → 交给"落后的那只"。这正是"a 跳 5 步、b 才 1 步"要的结果：
+  //    b 落后就轮到 b，b 连续追几棒；等 b 追上 a 了才会轮到 a
+  // 4) 每次交棒后至少停留 SWITCH_HOLD 秒，杜绝同帧 A→B→A 的横跳
+  // 5) 两只都动不了（都够不着下一块）超过 STUCK_T 秒 → 强制换手兜底
+  var SWITCH_HOLD = 0.5;
+  var STUCK_T = 1.5;
+  Game.prototype._autoSwitch = function () {
+    if (!this.begun) return;
+    if (this.time - this._lastSwitch < SWITCH_HOLD) return;
+
+    var cur = this.monkeys[this.active];
+    var other = this.monkeys[1 - this.active];
+    var otherReady = other.grounded && other.stunT <= 0 && other.wetT <= 0;
+    var curBad = cur.wetT > 0 || cur.stunT > 0 || !cur.grounded;
+
+    // ① 落水/被晕：换另一只来救
+    if (curBad) {
+      if (otherReady) { this._lastSwitch = this.time; this.setActive(1 - this.active); }
+      return;
+    }
+    // ② 还没起跳过（刚开局），或这一棒还在空中 → 保持
+    if (!cur.hasJumped) return;
+    if (!otherReady) return;
+
+    // ③ 这一棒跳完了吗？（progressX = 它站稳到过的最远处，落地时才更新）
+    if (cur.progressX < cur.x - 0.5) return;
+
+    // ④ 交棒：永远交给"推进得少的那只"。
+    //    对方落后 → 轮到它追；对方已经追上/超车 → 说明它更需要支援，也一样交给它。
+    var otherBehind = other.progressX < cur.progressX - 1;
+    if (otherBehind) {
+      this._lastSwitch = this.time;
+      this.setActive(1 - this.active);
+      this._autoSince = 0;
+      return;
+    }
+
+    // ⑤ 对方不落后（通常是自己刚被手动跳过）：自己继续跳，但要留一个兜底，
+    //    两只都够不着下一块地时别把局面焊死
+    if (this._canHop(cur) || this._canHop(other)) { this._autoSince = 0; return; }
+    this._autoSince += 0.016;
+    if (this._autoSince > STUCK_T) {
+      this._lastSwitch = this.time;
+      this.setActive(1 - this.active);
+      this._autoSince = 0;
+    }
+  };
+
+  /**
+   * 好友掉线兜底：轮到好友的猴子、但对面一直没动作超过 2 秒，
+   * 就把操作权交回本端，别让整局卡死。
+   * 由房主（权威端）每帧调用。
+   */
+  Game.prototype._rescueStalledTurn = function () {
+    if (!this.netMode || this.state !== 'playing') return;
+    if (this.active === this.seat) { this._idleSince = -1; return; }
+    var cur = this.monkeys[this.active];
+    if (!cur.grounded || cur.charging) { this._idleSince = -1; return; }
+    if (this._idleSince === undefined || this._idleSince < 0) this._idleSince = this.time;
+    if (this.time - this._idleSince > 2.0) {
+      this._idleSince = -1;
+      this.active = this.seat;
+      this._lastSwitch = this.time;
+      this.emit('switch', { idx: this.active, stall: true });
+    }
+  };
+
+  /**
+   * 相机：把两只猴都框在画面里，视野中心略偏向领跑的那只。
+   * 房主每帧调用；客人端收到快照后也调用，保证两边构图一致。
+   */
+  Game.prototype._updateCamera = function (k) {
+    var ms = this.monkeys;
+    var lo = Math.min(ms[0].x, ms[1].x), hi = Math.max(ms[0].x, ms[1].x);
+
+    // 蓄力瞄准时，把"按当前力度会落到哪"算进取景范围，否则瞄准线和落点圈会跑到屏幕外。
+    // 只往后看到"当前力度落点 + 一点余量"，力度越大视野越远，角色不会被挤到边上。
+    var aimRight = hi;
+    var acting = ms[this.active];
+    if (acting && acting.charging) {
+      var pw = clamp(acting.chargeT / (CFG.MAX_POWER_MS / 1000), 0, 1);
+      var reach = this.projectLanding(acting.x, pw, acting.y) + 40;
+      if (reach > aimRight) aimRight = reach;
+    }
+
+    var mid = lo + (aimRight - lo) * 0.62;
+    this.camX = lerp(this.camX, mid - CFG.W / 2, k == null ? CFG.CAM_LERP : k);
+
+    // 安全区：屏幕左缘 = camX，右缘 = camX + W
+    // 要求 lo - camX >= pad 且 camX + W - aimRight >= pad
+    var pad = 46;
+    var cMin = aimRight + pad - CFG.W, cMax = lo - pad;
+    if (cMin <= cMax) this.camX = clamp(this.camX, cMin, cMax);
+    else this.camX = lerp(this.camX, (lo + aimRight) / 2 - CFG.W / 2, (k == null ? CFG.CAM_LERP : k));
+  };
+
+  // 这只猴原地满蓄力起跳，能不能摸到下一块平台
+  Game.prototype._canHop = function (m) {
+    if (!m.grounded) return false;
+    var p = this.platformAt(m.x);
+    var edge = p ? p.x + p.w : m.x;
+    var q = this.nextPlatform(edge);
+    if (!q) return false;
+    // 用"满蓄力的真实落点"判断，而不是平台左缘距离（落点会超过平台左缘很多）
+    // 注意：绳子只在"两只都在空中"时才互相牵扯，另一只站在地上不会缩短这一跳，不用修正
+    var land = this.projectLanding(m.x, 1, m.y);
+    return land >= q.x - 4;
+  };
+
+  Game.prototype._land = function (m, plat) {
+    m.y = plat.y;
+    m.vy = 0;
+    m.vx = 0;
+    m.grounded = true;
+    m.squash = 1.18;
+    // 记录"站稳过的最远位置"：换人时用它判断谁落后、这一棒是否已经跳完
+    if (m.progressX < m.x) m.progressX = m.x;
+    this._burst(m.x, plat.y, 5, plat.type === 'ice' ? '#bdf1ff' : '#d8e3a8');
+    // 完美着陆：落在平台正中央 -> 连击加分（蓄力精准度的回报，不新增按键）
+    var center = plat.x + plat.w / 2;
+    if (plat.type !== 'start' && Math.abs(m.x - center) < plat.w * CFG.PERFECT_RATIO) {
+      this.combo++;
+      if (this.combo > this.bestCombo) this.bestCombo = this.combo;
+      this.perfects++;
+      var add = CFG.PERFECT_BONUS + (this.combo >= 3 ? CFG.COMBO_BONUS : 0);
+      this.bonus += add;
+      this._float(m.x, plat.y - 88,
+        this.combo >= 3 ? '火热 x' + this.combo + '！+' + add : '完美！+' + add,
+        this.combo >= 3 ? '#e8590c' : '#2f9e44');
+      this._burst(m.x, plat.y - 6, 9, '#ffd43b');
+      this.emit('perfect', { idx: m.idx, combo: this.combo, add: add });
+    } else if (plat.type !== 'start') {
+      this.combo = 0;
+    }
+    this.emit('land', { idx: m.idx, x: m.x, y: plat.y });
+  };
+
+  Game.prototype._wet = function (m) {
+    m.y = CFG.GROUND_Y + 14;
+    m.vx = 0; m.vy = 0;
+    m.grounded = false;
+    m.wetT = CFG.PATIENCE;
+    this.combo = 0;
+    m.squash = 0.7;
+    this.shake = 0.6;
+    this._burst(m.x, CFG.GROUND_Y + 2, 10, '#7fd4ff');
+    this.emit('wet', { idx: m.idx });
+  };
+
+  // ---------- 绳子：哥俩好的灵魂 ----------
+  Game.prototype._rope = function (dt) {
+    var ms = this.monkeys, a = ms[0], b = ms[1];
+    var dx = b.x - a.x, dy = b.y - a.y;
+    var d = Math.sqrt(dx * dx + dy * dy) || 0.001;
+    var rest = this.ropeRest();
+    var over = d - rest;
+
+    // 两端都在空中：绳子绷紧互相牵扯。
+    // 这里直接把位置往回拽 25% 是"瞬移"，会把抛物线打乱、玩家按同样久却跳到别处；
+    // 改成作用在速度上（限幅），手感更可预测。
+    if (!a.grounded && !b.grounded && a.wetT <= 0 && b.wetT <= 0 && over > 0) {
+      var nx = dx / d, ny = dy / d;
+      var pull = Math.min(over * 6, 260) * dt;
+      a.vx += nx * pull; a.vy += ny * pull;
+      b.vx -= nx * pull; b.vy -= ny * pull;
+
+      // 摆荡助力（面包和年糕的"悠起来"）：绳子绷紧、下面那只正在下落时，
+      // 像秋千一样把它往上悠一把，并顺着前进方向往前送——制造"借绳发力"的手感。
+      // 水平推力与绳回拽反向，用途是"抵消回拽、把跳距送出去"，不是加速器；
+      // 只加在速度上、幅度受限，不破坏"按多久跳多远"的可预测性。
+      // 注意：水平推力恒为 +x（前进方向）。早先按"远离锚点"给方向，
+      // 后排猴下落时会被往后推，与"接力前进"的玩法相悖，已修正。
+      var lower = a.y >= b.y ? a : b;
+      if (lower.vy > 0 && over > 6) {
+        lower.vy -= Math.min(over * CFG.SWING_LIFT, 110) * dt;
+        lower.vx += Math.min(over * 1.2, 110) * dt;
+      }
+    }
+
+    for (var i = 0; i < 2; i++) {
+      var m = ms[i];
+      if (m.wetT <= 0) continue;
+      var other = ms[1 - i];
+
+      if (other.grounded) {
+        // 伙伴站稳在岸上 -> 绳子把落水的这只往回、往上"钓"
+        var k = Math.min(1, dt * 4.5);
+        var pHome = this.platformAt(other.x);
+        var baseY = pHome ? pHome.y : other.y;
+        var inward = other.x > m.x ? -1 : 1;
+        var tx = other.x + inward * Math.min(rest * 0.72, 108);
+        var ty = this._surfaceNear(tx, baseY) - 34;
+        m.x = lerp(m.x, tx, k);
+        m.y = lerp(m.y, ty, k);
+
+        var pHere = this.platformAt(m.x);
+        if (pHere && m.y >= pHere.y - 40) { this._rescued(m, pHere); continue; }
+      } else if (other.y < m.y - 24) {
+        // 伙伴正往前上方跃过 -> 把他带一带
+        m.x = lerp(m.x, other.x - rest * 0.35, Math.min(1, dt * 2.4));
+        m.y = lerp(m.y, other.y, Math.min(1, dt * 1.6));
+        var p2 = this.platformAt(m.x);
+        if (p2 && m.y >= p2.y - 40) { this._rescued(m, p2); continue; }
+      }
+
+      if (m.wetT <= 0) {
+        m.y += 160 * dt;
+        if (m.y > CFG.H + 260) m.wetT = -1;
+      }
+    }
+  };
+
+  Game.prototype._rescued = function (m, p) {
+    m.y = p.y;
+    m.vy = 0; m.vx = 0;
+    m.grounded = true;
+    m.wetT = 0;
+    m.squash = 1.28;
+    if (m.progressX < m.x) m.progressX = m.x;
+    this.rescues++;
+    this._float(m.x, p.y - 78, '哥俩好！+30', '#2f9e44');
+    this._burst(m.x, p.y - 18, 12, '#69db7c');
+    this.emit('rescue', { idx: m.idx });
+  };
+
+  Game.prototype._obstacles = function () {
+    var ms = this.monkeys;
+    for (var i = 0; i < this.obstacles.length; i++) {
+      var o = this.obstacles[i];
+      if (o.dead) continue;
+      for (var j = 0; j < 2; j++) {
+        var m = ms[j];
+        if (!m.grounded || m.wetT > 0 || m.stunT > 0) continue;
+        if (Math.abs(m.x - o.x) < o.w * 0.85 && Math.abs(m.y - o.y) < o.h + 16) {
+          m.x = o.x - (m.x >= o.x ? 1 : -1) * (o.w * 1.0);
+          m.stunT = 0.55;
+          m.squash = 0.8;
+          this.combo = 0;
+          o.dead = true;
+          this.shake = 0.8;
+          this._burst(o.x, o.y - 12, 8, '#ff6b6b');
+          this._float(o.x, o.y - 56, o.kind === 'spike' ? '扎到啦！' : '小心！', '#e03131');
+          this.emit('hit', { idx: j, kind: o.kind });
+          var p = this.platformAt(m.x);
+          if (p) { m.y = p.y; m.grounded = true; } else this._wet(m);
+          break;
+        }
+      }
+    }
+  };
+
+  Game.prototype._pickups = function (dt) {
+    for (var i = 0; i < this.pickups.length; i++) {
+      var c = this.pickups[i];
+      if (c.taken) continue;
+      c.t += dt;
+      for (var j = 0; j < 2; j++) {
+        var m = this.monkeys[j];
+        // 不要求 grounded：高处的香蕉/金香蕉本来就设计成"跳起来擦到边才算吃到"
+        // （早先限定 grounded 导致 -82/-104 高度的道具永远够不着，已修复）。
+        // 但掉水里的不算——它正在被绳子往上钓，别让它顺手捡币。
+        if (m.wetT > 0) continue;
+        var reachY = c.gold ? 66 : 44;   // 金香蕉挂得高，判定框放宽
+        if (Math.abs(m.x - c.x) < 24 && Math.abs((m.y - 30) - c.y) < reachY) {
+          c.taken = true;
+          if (c.gold) {
+            this.golds++;
+            this.bonus += CFG.GOLD_BONUS;
+            this._burst(c.x, c.y, 14, '#ffd43b');
+            this._float(c.x, c.y - 30, '金香蕉 +' + CFG.GOLD_BONUS, '#f08c00');
+            this.emit('gold', { n: this.golds });
+          } else {
+            this.coins++;
+            this._burst(c.x, c.y, 7, '#ffd43b');
+            this._float(c.x, c.y - 18, '+10', '#f08c00');
+            this.emit('coin', { n: this.coins });
+          }
+          break;
+        }
+      }
+    }
+  };
+
+  Game.prototype._gameOver = function (reason) {
+    if (this.state === 'over') return;
+    this.state = 'over';
+    this.emit('gameover', {
+      score: this.score, distance: this.distance,
+      coins: this.coins, rescues: this.rescues,
+      falls: this.falls, bestCombo: this.bestCombo,
+      perfects: this.perfects, golds: this.golds,
+      reason: reason || 'both-wet'
+    });
+  };
+
+  /**
+   * 双落水总入口（面包和年糕式检查点续跳）：
+   *  - 已越过检查点、且没在同一检查点连续摔 MAX_FALLS_PER_CP 次 -> 回检查点继续
+   *  - 还没走到任何一个检查点就双落 -> 直接结算（开局不给兜底）
+   *  - 同一检查点连摔 3 次 -> 判定卡关，结算（防止被地形焊死）
+   */
+  Game.prototype._onBothWet = function () {
+    if (this.state !== 'playing') return;
+    var cp = this.checkpoints[this._lastCPIdx];
+    if (cp && cp.passed && this.fallsSinceCP < CFG.MAX_FALLS_PER_CP) {
+      this._respawnAt(cp);
+    } else {
+      this._gameOver(this.fallsSinceCP >= CFG.MAX_FALLS_PER_CP ? 'stuck' : 'both-wet');
+    }
+  };
+
+  /** 两只猴 + 绳子整体复位到检查点；距离/分数/金香蕉都保留（分是"到过的高度"） */
+  Game.prototype._respawnAt = function (cp) {
+    var ms = this.monkeys;
+    var y = this._surfaceNear(cp.x, CFG.GROUND_Y);
+    var p = this.platformAt(cp.x);
+    var lo = p ? p.x + 12 : cp.x - 70;
+    var hi = p ? p.x + p.w - 12 : cp.x + 70;
+    for (var i = 0; i < 2; i++) {
+      var m = ms[i];
+      m.x = clamp(cp.x + (i === 0 ? -36 : 36), Math.min(lo, hi), Math.max(lo, hi));
+      m.y = y;
+      m.vx = 0; m.vy = 0;
+      m.grounded = true;
+      m.wetT = 0; m.stunT = 0; m.charging = false;
+      m.squash = 1.12;
+      m.hasJumped = true;
+    }
+    this.falls++;
+    this.fallsSinceCP++;
+    this.combo = 0;
+    this._bothWetT = 0;
+    // 联机时把操作权还给本端 seat（主机权威，客人跟快照）；单人给落后的那只
+    this.active = this.netMode ? this.seat : (ms[0].progressX <= ms[1].progressX ? 0 : 1);
+    this._lastSwitch = this.time;
+    this.camX = (ms[0].x + ms[1].x) / 2 - CFG.W / 2;   // 相机直接切过去，不从原地滑
+    this.shake = 0.5;
+    this._float(cp.x, y - 124, '掉回检查点（第 ' + this.falls + ' 次）', '#e8590c');
+    this._burst(cp.x, y - 30, 12, '#ffa94d');
+    this.emit('respawn', { falls: this.falls, cp: cp.x });
+  };
+
+  // ---------- 特效 ----------
+  Game.prototype._burst = function (x, y, n, color) {
+    for (var i = 0; i < n; i++) {
+      var a = Math.random() * Math.PI * 2, s = 40 + Math.random() * 120;
+      this.particles.push({ x: x, y: y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 60, life: 0.5 + Math.random() * 0.4, color: color, r: 1.5 + Math.random() * 3 });
+    }
+  };
+  Game.prototype._float = function (x, y, text, color) {
+    this.floatTexts.push({ x: x, y: y, text: text, color: color, life: 1.2 });
+  };
+  Game.prototype._fx = function (dt) {
+    for (var i = this.particles.length - 1; i >= 0; i--) {
+      var p = this.particles[i];
+      p.life -= dt; p.vy += 420 * dt;
+      p.x += p.vx * dt; p.y += p.vy * dt;
+      if (p.life <= 0) this.particles.splice(i, 1);
+    }
+    for (var j = this.floatTexts.length - 1; j >= 0; j--) {
+      var f = this.floatTexts[j];
+      f.life -= dt; f.y -= 32 * dt;
+      if (f.life <= 0) this.floatTexts.splice(j, 1);
+    }
+  };
+  Game.prototype._ambient = function (dt) {
+    for (var i = 0; i < 2; i++) {
+      var m = this.monkeys[i];
+      if (!m.charging) m.squash = lerp(m.squash, 1, Math.min(1, dt * 10));
+    }
+  };
+
+  // ---------- 联机（主机权威 + 客人回放快照） ----------
+  Game.prototype.setNet = function (mode, seat) {
+    this.netMode = mode;
+    this.seat = seat || 0;
+    this.cmdQueue = [];
+    this._lastCmdSeq = 0;
+  };
+
+  Game.prototype.queueRemote = function (api) {
+    if (!api) return;
+    this.cmdQueue.push(api);
+    this.cmdQueue.sort(function (a, b) { return a.seq - b.seq; });
+  };
+
+  Game.prototype._net = function () {
+    if (this.netMode !== 'host') return;
+    var guard = 0;
+    while (this.cmdQueue.length && guard++ < 24) {
+      var c = this.cmdQueue[0];
+      this._lastCmdSeq = c.seq;
+      this.cmdQueue.shift();
+      this._applyRemote(c);
+    }
+  };
+
+  Game.prototype._applyRemote = function (api) {
+    var m = this.monkeys[api.m];
+    if (!m || m.wetT > 0) return;
+    if (api.t === 'down') {
+      if (m.grounded && m.stunT <= 0 && !m.charging) { m.charging = true; m.chargeT = 0; }
+    } else if (api.t === 'up' && m.charging) {
+      m.charging = false;
+      var ratio = m.chargeT / (CFG.MAX_POWER_MS / 1000);
+      if (typeof api.p === 'number') ratio = api.p;
+      this._launch(m, ratio);
+      this.emit('jump', { idx: m.idx, power: m.power, from: m.x, remote: true });
+    }
+  };
+
+  Game.prototype.snapshot = function () {
+    var ms = this.monkeys;
+    return {
+      s: this.state === 'over' ? 0 : 1,
+      a: this.active,
+      m: [
+        [Math.round(ms[0].x), Math.round(ms[0].y), ms[0].grounded ? 1 : 0, ms[0].wetT > 0 ? 1 : 0],
+        [Math.round(ms[1].x), Math.round(ms[1].y), ms[1].grounded ? 1 : 0, ms[1].wetT > 0 ? 1 : 0]
+      ],
+      sc: this.score, co: this.coins, re: this.rescues,
+      di: this.distance, mx: Math.round(this.maxX),
+      cam: Math.round(this.camX),
+      fa: this.falls, bc: this.bestCombo, pf: this.perfects,
+      gd: this.golds, cb: this.combo
+    };
+  };
+
+  Game.prototype.applySnapshot = function (snap) {
+    if (!snap) return;
+    if (!snap.s) { this._gameOver(); return; }
+    var ms = this.monkeys;
+    for (var i = 0; i < 2; i++) {
+      var m = ms[i], s = snap.m[i];
+      if (!s) continue;
+      var dx = s[0] - m.x, dy = s[1] - m.y;
+      // 小偏差做平滑（看着不抖），大偏差直接对齐（不然会越拖越远跑出画面）
+      if (Math.abs(dx) > 26 || Math.abs(dy) > 60) { m.x = s[0]; m.y = s[1]; }
+      else { m.x += dx * 0.7; m.y += dy * 0.7; }
+      m.grounded = !!s[2];
+      m.wetT = s[3] ? 0.8 : 0;
+      m.charging = false;
+    }
+    this.active = snap.a;
+    this.score = snap.sc || 0;
+    this.coins = snap.co || 0;
+    this.rescues = snap.re || 0;
+    this.distance = snap.di || 0;
+    this.falls = snap.fa || 0;
+    this.bestCombo = snap.bc || 0;
+    this.perfects = snap.pf || 0;
+    this.golds = snap.gd || 0;
+    this.combo = snap.cb || 0;
+    if (typeof snap.mx === 'number') this.maxX = snap.mx;
+    // 相机和地形生成交给 tickVisual 每帧处理（快照 200ms 才来一次，这里做会一顿一顿）
+  };
+
+  // 客人端每帧要做的事：相机跟随、地形生成、抖动/粒子，避免画面"冻住"或猴子跑出画面
+  Game.prototype.tickVisual = function (dt) {
+    this.time += dt;
+    this._updateCamera(CFG.CAM_LERP * 1.6);   // 客人端稍微跟紧一点，抵消快照延迟
+    this._genUntil(this.camX + CFG.W * 2);
+    this._ambient(dt);
+    this._fx(dt);
+    if (this.shake > 0) this.shake = Math.max(0, this.shake - dt * 3);
+  };
+
+  return { Game: Game, CFG: CFG, LEVELS: LEVELS, mulberry32: mulberry32 };
+});
+  });
+
+  __def('/shared/core/render.js', function (require, module, exports) {
+/**
+ * 哥俩好 · 渲染层
+ * 只依赖 Canvas 2D 的 ctx 与游戏状态对象，网页 / 小程序共用。
+ */
+(function (root) {
+  'use strict';
+  // 小程序里通过 CommonJS 引入；网页里读 window.GLHCore
+  var Core = root.GLHCore;
+  if (!Core && typeof module === 'object' && module.exports && typeof require === 'function') {
+    Core = require('/shared/core/core.js');
+    root.GLHCore = Core;
+  }
+  var CFG = (Core || {}).CFG;
+
+  var COL = {
+    skyTop: '#bfe7ff',
+    skyBottom: '#ffeccf',
+    sun: '#ffd066',
+    hillFar: '#a7d8c3',
+    hillNear: '#7cc7a5',
+    water: '#4fb6e8',
+    waterDark: '#2f92c9',
+    dirt: '#8a5a3b',
+    dirtDark: '#6d4229',
+    grass: '#63b96b',
+    grassLight: '#8ed77b',
+    ice: '#cdefff',
+    iceEdge: '#9fd8f5',
+    ink: '#4a3226',
+    rope: '#f2c078',
+    ropeDark: '#c9954f'
+  };
+
+  function r2(x) { return Math.round(x * 10) / 10; }
+
+  var Renderer = function (ctx, opts) {
+    this.ctx = ctx;
+    this.opts = opts || {};
+    this.t = 0;
+    this.clouds = [];
+    for (var i = 0; i < 7; i++) {
+      this.clouds.push({ x: i * 240 + Math.random() * 120, y: 40 + Math.random() * 130, s: 0.6 + Math.random() * 0.7, sp: 4 + Math.random() * 8 });
+    }
+  };
+
+  Renderer.prototype.resize = function (scale) { this.scale = scale; };
+
+  Renderer.prototype.draw = function (g, dt, ui) {
+    var ctx = this.ctx;
+    var W = CFG.W, H = CFG.H;
+    this.t += dt;
+    var t = this.t;
+
+    var shakeX = 0, shakeY = 0;
+    if (g.shake > 0) {
+      shakeX = (Math.random() - 0.5) * g.shake * 10;
+      shakeY = (Math.random() - 0.5) * g.shake * 10;
+    }
+
+    ctx.save();
+    // ---------- 天空 ----------
+    var sky = ctx.createLinearGradient ? ctx.createLinearGradient(0, 0, 0, H) : null;
+    if (sky) {
+      sky.addColorStop(0, COL.skyTop);
+      sky.addColorStop(1, COL.skyBottom);
+      ctx.fillStyle = sky;
+    } else {
+      ctx.fillStyle = COL.skyTop;
+    }
+    ctx.fillRect(0, 0, W, H);
+
+    // 太阳
+    ctx.fillStyle = COL.sun;
+    circle(ctx, 300, 92, 34);
+    ctx.globalAlpha = 0.25;
+    circle(ctx, 300, 92, 48);
+    ctx.globalAlpha = 1;
+
+    // 云
+    ctx.fillStyle = '#ffffff';
+    for (var i = 0; i < this.clouds.length; i++) {
+      var c = this.clouds[i];
+      var cx = ((c.x + t * c.sp - g.camX * 0.12) % 1700 + 1700) % 1700 - 200;
+      this._cloud(cx, c.y, c.s);
+    }
+
+    // 远山（视差）
+    this._hills(g.camX * 0.25, 300, COL.hillFar, 120);
+    this._hills(g.camX * 0.45 + 90, 350, COL.hillNear, 100);
+
+    // ---------- 世界 ----------
+    ctx.save();
+    ctx.translate(-g.camX + shakeX, shakeY);
+
+    this._water(g, t);
+    this._platforms(g, t);
+    this._decals(g, t);
+    this._rope(g, t);
+    this._monkeys(g, t, ui);
+    this._particles(g);
+    this._floats(g);
+    this._aim(g, ui);
+
+    ctx.restore();
+    ctx.restore();
+  };
+
+  Renderer.prototype._cloud = function (x, y, s) {
+    var ctx = this.ctx;
+    ctx.beginPath();
+    ctx.arc(x, y, 22 * s, 0, Math.PI * 2);
+    ctx.arc(x + 24 * s, y - 10 * s, 28 * s, 0, Math.PI * 2);
+    ctx.arc(x + 56 * s, y, 20 * s, 0, Math.PI * 2);
+    ctx.arc(x + 28 * s, y + 10 * s, 22 * s, 0, Math.PI * 2);
+    ctx.fill();
+  };
+
+  Renderer.prototype._hills = function (offset, baseY, color, h) {
+    var ctx = this.ctx;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(-100, CFG.GROUND_Y + 40);
+    var span = 220;
+    var start = Math.floor(offset / span) * span - span;
+    for (var x = start; x <= start + CFG.W + span * 2; x += span) {
+      var sx = x - offset;
+      ctx.moveTo(sx, CFG.GROUND_Y + 40);
+      ctx.quadraticCurveTo(sx + span / 2, baseY - h, sx + span, CFG.GROUND_Y + 40);
+      ctx.lineTo(sx, CFG.GROUND_Y + 40);
+    }
+    ctx.fill();
+  };
+
+  Renderer.prototype._water = function (g, t) {
+    var ctx = this.ctx;
+    var left = g.camX - 40, right = g.camX + CFG.W + 40;
+    var y = CFG.GROUND_Y + 14;
+    ctx.fillStyle = COL.water;
+    ctx.fillRect(left, y, right - left, CFG.H - y + 200);
+    ctx.fillStyle = COL.waterDark;
+    for (var i = 0; i < 40; i++) {
+      var wx = Math.floor(left / 46) * 46 + i * 46;
+      var wy = y + 16 + Math.sin(t * 1.6 + i) * 5 + (i % 3) * 22;
+      ctx.beginPath();
+      ctx.ellipse ? ctx.ellipse(wx, wy, 16, 3.2, 0, 0, Math.PI * 2) : ctx.arc(wx, wy, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // 水面高光
+    ctx.strokeStyle = '#ffffff';
+    ctx.globalAlpha = 0.6;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (var x = Math.floor(left / 30) * 30; x < right; x += 30) {
+      var yy = y + Math.sin(t * 2 + x * 0.05) * 2.2;
+      if (x === Math.floor(left / 30) * 30) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
+    }
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  };
+
+  Renderer.prototype._platforms = function (g, t) {
+    var ctx = this.ctx;
+    var left = g.camX - 80, right = g.camX + CFG.W + 80;
+    for (var i = 0; i < g.platforms.length; i++) {
+      var p = g.platforms[i];
+      if (p.x + p.w < left || p.x > right) continue;
+      var bottom = CFG.H + 240;
+      if (p.type === 'ice') {
+        ctx.fillStyle = COL.ice;
+        roundRect(ctx, p.x, p.y, p.w, bottom - p.y, 8);
+        ctx.fill();
+        ctx.fillStyle = COL.iceEdge;
+        roundRect(ctx, p.x, p.y, p.w, 10, 6);
+        ctx.fill();
+      } else {
+        ctx.fillStyle = COL.dirt;
+        roundRect(ctx, p.x, p.y, p.w, bottom - p.y, 10);
+        ctx.fill();
+        // 泥土纹理
+        ctx.fillStyle = COL.dirtDark;
+        for (var k = 0; k < Math.floor(p.w / 26); k++) {
+          var dx = p.x + 12 + k * 26 + ((k % 2) * 7);
+          var dy = p.y + 40 + ((k * 37) % 90);
+          circle(ctx, dx, dy, 4.5);
+        }
+        // 草皮
+        ctx.fillStyle = COL.grass;
+        roundRect(ctx, p.x, p.y - 2, p.w, 18, 9);
+        ctx.fill();
+        ctx.fillStyle = COL.grassLight;
+        roundRect(ctx, p.x + 2, p.y - 2, p.w - 4, 8, 4);
+        ctx.fill();
+        // 草尖
+        ctx.fillStyle = COL.grass;
+        for (var j = 0; j < Math.floor(p.w / 16); j++) {
+          var gx = p.x + 8 + j * 16;
+          ctx.beginPath();
+          ctx.moveTo(gx, p.y);
+          ctx.lineTo(gx + 3, p.y - 9);
+          ctx.lineTo(gx + 6, p.y);
+          ctx.fill();
+        }
+      }
+      // 完美着陆靶圈：平台正中央的浅色圆环，提示"踩这里有连击分"
+      if (p.type !== 'start' && p.w >= 60) {
+        var pr = p.w * 0.16;
+        ctx.save();
+        ctx.globalAlpha = 0.5;
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.setLineDash && ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        if (ctx.ellipse) ctx.ellipse(p.x + p.w / 2, p.y - 1, pr, pr * 0.42, 0, 0, Math.PI * 2);
+        else ctx.arc(p.x + p.w / 2, p.y - 1, pr * 0.6, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+  };
+
+  Renderer.prototype._decals = function (g, t) {
+    var ctx = this.ctx;
+    var left = g.camX - 80, right = g.camX + CFG.W + 80;
+    // 检查点旗
+    for (var q = 0; q < g.checkpoints.length; q++) {
+      var cp = g.checkpoints[q];
+      if (cp.x < left || cp.x > right) continue;
+      this._flag(cp.x, this._cpY(g, cp.x), t + q, cp.passed);
+    }
+    // 金币 / 金香蕉
+    for (var i = 0; i < g.pickups.length; i++) {
+      var c = g.pickups[i];
+      if (c.taken || c.x < left || c.x > right) continue;
+      if (c.gold) this._goldBanana(c.x, c.y + Math.sin(t * 3 + c.t) * 5, t + c.t);
+      else this._coin(c.x, c.y + Math.sin(t * 3 + c.t) * 4, t + c.t);
+    }
+    // 障碍
+    for (var j = 0; j < g.obstacles.length; j++) {
+      var o = g.obstacles[j];
+      if (o.dead || o.x < left || o.x > right) continue;
+      if (o.kind === 'bear') this._bear(o.x, o.y, t);
+      else if (o.kind === 'piranha') this._piranha(o.x, o.y, t);
+      else this._spike(o.x, o.y);
+    }
+    // 树 / 灌木
+    for (var d = 0; d < g.decos.length; d++) {
+      var e = g.decos[d];
+      if (e.x < left || e.x > right) continue;
+      if (e.kind === 'tree') this._tree(e.x, e.y, e.s);
+      else this._bush(e.x, e.y, e.s);
+    }
+  };
+
+  // 检查点旗面高度：找旗杆处的地面（没有就用地平线）
+  Renderer.prototype._cpY = function (g, x) {
+    var ps = g.platforms;
+    for (var i = 0; i < ps.length; i++) {
+      if (x >= ps[i].x && x <= ps[i].x + ps[i].w) return ps[i].y;
+    }
+    return CFG.GROUND_Y;
+  };
+
+  Renderer.prototype._flag = function (x, y, t, passed) {
+    var ctx = this.ctx;
+    ctx.save();
+    ctx.translate(x, y);
+    // 旗杆
+    ctx.fillStyle = passed ? '#1864ab' : '#adb5bd';
+    ctx.fillRect(-2, -66, 4, 66);
+    // 旗面（飘动）
+    var wave = Math.sin(t * 3) * 3;
+    ctx.fillStyle = passed ? '#339af0' : '#ced4da';
+    ctx.beginPath();
+    ctx.moveTo(2, -64);
+    ctx.quadraticCurveTo(20, -60 + wave, 38, -52);
+    ctx.quadraticCurveTo(20, -50 + wave, 2, -42);
+    ctx.closePath();
+    ctx.fill();
+    if (passed) {
+      // 已打卡：旗面上画个勾
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2.6;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(11, -54);
+      ctx.lineTo(17, -47);
+      ctx.lineTo(28, -59);
+      ctx.stroke();
+    }
+    ctx.restore();
+  };
+
+  // 金香蕉：大一号 + 星星闪光，挂在跳跃顶点高度
+  Renderer.prototype._goldBanana = function (x, y, t) {
+    var ctx = this.ctx;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(Math.sin(t * 2) * 0.12);
+    ctx.fillStyle = '#f7b731';
+    ctx.beginPath();
+    ctx.moveTo(-13, 4);
+    ctx.quadraticCurveTo(-16, -12, 0, -13);
+    ctx.quadraticCurveTo(16, -12, 13, 4);
+    ctx.quadraticCurveTo(0, 10, -13, 4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#ffd43b';
+    ctx.beginPath();
+    ctx.moveTo(-9, 3);
+    ctx.quadraticCurveTo(-11, -9, 0, -10);
+    ctx.quadraticCurveTo(11, -9, 9, 3);
+    ctx.quadraticCurveTo(0, 8, -9, 3);
+    ctx.closePath();
+    ctx.fill();
+    // 闪光
+    var tw = (Math.sin(t * 4) + 1) / 2;
+    ctx.globalAlpha = 0.35 + tw * 0.5;
+    ctx.fillStyle = '#fff3bf';
+    star(ctx, 0, -14, 5, 4.5, 1.8);
+    ctx.fill();
+    ctx.restore();
+  };
+
+  Renderer.prototype._coin = function (x, y, t) {
+    var ctx = this.ctx;
+    var sq = Math.abs(Math.cos(t * 2.2));
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(0.35 + sq * 0.65, 1);
+    ctx.fillStyle = '#f7b731';
+    circle(ctx, 0, 0, 13);
+    ctx.fill();
+    ctx.fillStyle = '#ffd93d';
+    circle(ctx, 0, 0, 9.5);
+    ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = '#c98b19';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('¥', x, y + 0.5);
+  };
+
+  Renderer.prototype._bear = function (x, y, t) {
+    var ctx = this.ctx;
+    var bob = Math.sin(t * 2.4) * 1.2;
+    ctx.save();
+    ctx.translate(x, y + bob);
+    ctx.fillStyle = '#8d6e63';
+    circles(ctx, [-9, -22, 7, 9, -22, 7]);
+    ctx.fill();
+    ctx.fillStyle = '#a1887f';
+    circle(ctx, 0, -14, 15);
+    ctx.fill();
+    ctx.fillStyle = '#4e342e';
+    circles(ctx, [-5, -17, 2.2, 5, -17, 2.2]);
+    ctx.fill();
+    ctx.fillStyle = '#5d4037';
+    circle(ctx, 0, -9, 3.4);
+    ctx.fill();
+    ctx.restore();
+  };
+
+  Renderer.prototype._piranha = function (x, y, t) {
+    var ctx = this.ctx;
+    var yy = y + 26 + Math.sin(t * 3) * 3;
+    ctx.save();
+    ctx.translate(x, yy);
+    ctx.fillStyle = '#ef5350';
+    ctx.beginPath();
+    if (ctx.ellipse) ctx.ellipse(0, 0, 17, 11, 0, 0, Math.PI * 2);
+    else ctx.arc(0, 0, 12, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#c62828';
+    ctx.beginPath();
+    ctx.moveTo(-14, -2); ctx.lineTo(-24, -12); ctx.lineTo(-12, -9); ctx.fill();
+    ctx.fillStyle = '#fff';
+    circle(ctx, 6, -3, 3.6);
+    ctx.fill();
+    ctx.fillStyle = '#000';
+    circle(ctx, 7, -3, 1.7);
+    ctx.fill();
+    ctx.restore();
+  };
+
+  Renderer.prototype._spike = function (x, y) {
+    var ctx = this.ctx;
+    ctx.fillStyle = '#b0bec5';
+    for (var i = -1; i <= 1; i++) {
+      ctx.beginPath();
+      ctx.moveTo(x + i * 10 - 5, y);
+      ctx.lineTo(x + i * 10, y - 15);
+      ctx.lineTo(x + i * 10 + 5, y);
+      ctx.closePath();
+      ctx.fill();
+    }
+  };
+
+  Renderer.prototype._tree = function (x, y, s) {
+    var ctx = this.ctx;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(s, s);
+    ctx.fillStyle = '#8d6e63';
+    ctx.fillRect(-3, -32, 6, 32);
+    ctx.fillStyle = '#4caf50';
+    circle(ctx, 0, -44, 17);
+    ctx.fill();
+    ctx.fillStyle = '#66bb6a';
+    circle(ctx, -8, -40, 12);
+    circle(ctx, 9, -42, 11);
+    ctx.fill();
+    ctx.restore();
+  };
+
+  Renderer.prototype._bush = function (x, y, s) {
+    var ctx = this.ctx;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(s, s);
+    ctx.fillStyle = '#4caf50';
+    circles(ctx, [-8, -6, 9, 8, -6, 9, 0, -11, 11]);
+    ctx.fill();
+    ctx.restore();
+  };
+
+  Renderer.prototype._rope = function (g, t) {
+    var ctx = this.ctx;
+    var a = g.monkeys[0], b = g.monkeys[1];
+    var ax = a.x, ay = a.y - 26, bx = b.x, by = b.y - 26;
+    var mx = (ax + bx) / 2, my = (ay + by) / 2;
+    var sag = 16 + Math.sin(t * 3) * 2.5;
+    var dx = bx - ax, dy = by - ay;
+    var len = Math.sqrt(dx * dx + dy * dy) || 1;
+    var nx = -dy / len, ny = dx / len;
+    var taut = Math.max(0, len - g.ropeRest()) > 2;
+    var wob = taut ? 0 : 1;
+    var cxp = mx + nx * sag * wob, cyp = my + ny * sag * wob;
+
+    ctx.strokeStyle = COL.ropeDark;
+    ctx.lineWidth = taut ? 6.5 : 5;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.quadraticCurveTo(cxp, cyp, bx, by);
+    ctx.stroke();
+    // 绷紧（摆荡助力生效）时绳子提亮，给"借绳发力"一个视觉确认
+    ctx.strokeStyle = taut ? '#ffe08a' : COL.rope;
+    ctx.lineWidth = taut ? 4 : 3;
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.quadraticCurveTo(cxp, cyp, bx, by);
+    ctx.stroke();
+  };
+
+  // 卡通小猴
+  Renderer.prototype._monkeys = function (g, t, ui) {
+    var names = (ui && ui.names) || null;
+    for (var i = 0; i < 2; i++) {
+      var m = g.monkeys[i];
+      var isActive = g.active === i;
+      var canOp = g.netMode ? (g.netMode === 'host' && g.seat === i && isActive) : isActive;
+      this._monkey(m, t, {
+        idx: i,
+        active: isActive,
+        canOp: canOp,
+        charging: m.charging,
+        charge: m.charging ? Math.min(1, m.chargeT / (CFG.MAX_POWER_MS / 1000)) : 0,
+        wet: m.wetT > 0,
+        stun: m.stunT > 0,
+        ghost: m.wetT < -1,
+        opName: names ? names[i] + '的猴' : null
+      }, ui);
+    }
+  };
+
+  Renderer.prototype._monkey = function (m, t, st, ui) {
+    var ctx = this.ctx;
+    if (st.ghost) return;
+    var body = st.idx === 0 ? '#c68642' : '#d19a5e';
+    var face = '#f3d9b1';
+    var sq = m.squash || 1;
+    // 落水的猴子：半沉在水面，露出脑袋和爪子，别沉到看不见
+    var sink = st.wet ? 12 : 0;
+    var bob = m.grounded && !st.wet ? Math.sin(t * 5 + st.idx) * 1.4 : 0;
+    var x = m.x, y = m.y + bob;
+
+    ctx.save();
+    ctx.translate(x, y - 20 + sink);
+    ctx.scale(1 / sq, sq);
+
+    // 影子
+    if (m.grounded && !st.wet) {
+      ctx.save();
+      ctx.globalAlpha = 0.18;
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      if (ctx.ellipse) ctx.ellipse(0, 21, 15, 5, 0, 0, Math.PI * 2); else ctx.arc(0, 21, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // 耳朵
+    ctx.fillStyle = body;
+    circles(ctx, [-15, -12, 7, 15, -12, 7]);
+    ctx.fill();
+    ctx.fillStyle = '#e8b98f';
+    circles(ctx, [-15, -12, 4, 15, -12, 4]);
+    ctx.fill();
+
+    // 头
+    ctx.fillStyle = body;
+    circle(ctx, 0, -8, 17);
+    ctx.fill();
+
+    // 脸
+    ctx.fillStyle = face;
+    ctx.beginPath();
+    if (ctx.ellipse) ctx.ellipse(0, -4, 12, 11, 0, 0, Math.PI * 2); else ctx.arc(0, -4, 11, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 头发
+    ctx.strokeStyle = '#6d4c33';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(-3, -24); ctx.lineTo(-2, -30); ctx.lineTo(2, -26); ctx.lineTo(4, -31);
+    ctx.stroke();
+
+    // 眼睛（左右严格对称）。
+    // 注意：circle() 内部会 beginPath()，连续调两次再 fill() 会把第一只眼睛的路径冲掉
+    // —— 这就是之前"只剩一只右眼"的原因。必须每只眼睛单独 buildPath + fill。
+    var blink = (m.blink % 3.4) > 3.25;
+    ctx.fillStyle = COL.ink;
+    if (st.stun) {
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = COL.ink;
+      cross(ctx, -4.6, -8, 2.6); cross(ctx, 4.6, -8, 2.6);
+    } else if (blink) {
+      ctx.fillRect(-7, -8.8, 4.6, 1.8);
+      ctx.fillRect(2.4, -8.8, 4.6, 1.8);
+    } else {
+      [-4.6, 4.6].forEach(function (ex) {
+        ctx.beginPath(); ctx.arc(ex, -8, 2.7, 0, Math.PI * 2); ctx.fill();
+      });
+      ctx.fillStyle = '#fff';
+      [-5.4, 3.8].forEach(function (ex) {
+        ctx.beginPath(); ctx.arc(ex, -9, 0.95, 0, Math.PI * 2); ctx.fill();
+      });
+    }
+
+    // 嘴
+    ctx.strokeStyle = COL.ink;
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    if (st.wet) { ctx.arc(0, 2, 3.4, 0, Math.PI * 2); }
+    else if (st.charging) { ctx.arc(0, 0, 2.6, 0, Math.PI * 2); }
+    else { ctx.arc(0, -1, 4, 0.25 * Math.PI, 0.75 * Math.PI); }
+    ctx.stroke();
+
+    // 腮红
+    ctx.fillStyle = 'rgba(255,138,128,0.45)';
+    circles(ctx, [-10, 0, 3.2, 10, 0, 3.2]);
+    ctx.fill();
+
+    // 身体
+    ctx.fillStyle = body;
+    ctx.beginPath();
+    if (ctx.ellipse) ctx.ellipse(0, 18, 12, 13, 0, 0, Math.PI * 2); else ctx.arc(0, 18, 12, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = face;
+    ctx.beginPath();
+    if (ctx.ellipse) ctx.ellipse(0, 20, 7.5, 8, 0, 0, Math.PI * 2); else ctx.arc(0, 20, 7, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 手臂（蓄力时举起）
+    ctx.strokeStyle = body;
+    ctx.lineWidth = 5;
+    ctx.lineCap = 'round';
+    var armUp = st.charging ? -1 : 0;
+    ctx.beginPath();
+    ctx.moveTo(-10, 14); ctx.lineTo(-15, 14 + armUp * 9);
+    ctx.moveTo(10, 14); ctx.lineTo(15, 14 + armUp * 9);
+    ctx.stroke();
+
+    ctx.restore();
+
+    // ------- 状态标记 -------
+    var topY = m.y - 60;
+
+    if (st.wet) {
+      ctx.save();
+      ctx.globalAlpha = 0.8;
+      ctx.fillStyle = '#1e88e5';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('救我！', m.x, m.y - 6);
+      ctx.restore();
+      // 气泡
+      ctx.fillStyle = 'rgba(255,255,255,0.7)';
+      circle(ctx, m.x - 16, m.y + 4, 3);
+      circle(ctx, m.x - 22, m.y - 4, 2);
+      ctx.fill();
+    }
+
+    // 玩家标签
+    if (st.opName) {
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.font = '10px sans-serif';
+      ctx.textAlign = 'center';
+      var label = st.opName;
+      var wl = label.length * 10 + 12;
+      roundRect(ctx, m.x - wl / 2, topY - 30, wl, 15, 7);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.fillText(label, m.x, topY - 19);
+    }
+
+    // 箭头 / 蓄力条
+    if (st.canOp) {
+      var bounce = Math.sin(t * 6) * 3;
+      ctx.fillStyle = '#ff7043';
+      ctx.beginPath();
+      ctx.moveTo(m.x, topY + 8 + bounce);
+      ctx.lineTo(m.x - 9, topY - 6 + bounce);
+      ctx.lineTo(m.x + 9, topY - 6 + bounce);
+      ctx.closePath();
+      ctx.fill();
+
+      if (st.charging) {
+        var bw = 46, bh = 7;
+        var bx = m.x - bw / 2, by = topY + 14;
+        ctx.fillStyle = 'rgba(0,0,0,0.35)';
+        roundRect(ctx, bx, by, bw, bh, 3.5);
+        ctx.fill();
+        var ratio = st.charge;
+        ctx.fillStyle = ratio > 0.85 ? '#ff5252' : (ratio > 0.5 ? '#ffb300' : '#66bb6a');
+        roundRect(ctx, bx + 1, by + 1, (bw - 2) * ratio, bh - 2, 2.5);
+        ctx.fill();
+      }
+    }
+  };
+
+  Renderer.prototype._aim = function (g, ui) {
+    if (!ui || !ui.aiming) return;
+    var m = g.monkeys[g.active];
+    if (!m || !m.charging) return;
+    var ctx = this.ctx;
+    var p = g.chargeRatio();
+    var target = g.projectLanding(m.x, p, m.y);
+    // 落点高度按真实平台算，别一律画在 GROUND_Y
+    var plat = g.platformAt(target);
+    var landY = plat ? plat.y : CFG.GROUND_Y;
+    var hit = !!plat;
+
+    // 目标平台上的"安全落点区间"：告诉玩家这一格该落在哪
+    var here = g.platformAt(m.x);
+    var edge = here ? here.x + here.w : m.x;
+    var next = g.nextPlatform(edge);
+    if (next) {
+      var safeL = next.x + 6, safeR = next.x + next.w - 6;
+      ctx.save();
+      ctx.fillStyle = 'rgba(64,192,87,0.45)';
+      roundRect(ctx, safeL, next.y - 12, safeR - safeL, 10, 5);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    var dist = CFG.MIN_JUMP + p * CFG.JUMP_RANGE;
+    var vx = dist * CFG.JUMP_VX, vy = -dist * CFG.JUMP_VY, gr = CFG.GRAVITY;
+    ctx.save();
+    // 采样到"落回平台/水面"为止。落空时按水面再低 16px 算，否则 drop=0 会把曲线压成一个点
+    var missY = CFG.GROUND_Y + 16;
+    var drop = Math.max(0, m.y - (hit ? landY : missY));
+    var tLand = (-(-vy) + Math.sqrt(vy * vy + 2 * gr * drop)) / gr;
+    var pts = [];
+    for (var i = 0; i <= 20; i++) {
+      var tt = (i / 20) * tLand;
+      pts.push([m.x + vx * (1 - Math.exp(-0.25 * tt)) / 0.25,
+                m.y - 24 + vy * tt + 0.5 * gr * tt * tt]);
+    }
+    function strokePath(color, w) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = w;
+      ctx.beginPath();
+      for (var j = 0; j < pts.length; j++) {
+        if (j === 0) ctx.moveTo(pts[j][0], pts[j][1]); else ctx.lineTo(pts[j][0], pts[j][1]);
+      }
+      ctx.stroke();
+    }
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    strokePath('rgba(0,0,0,0.30)', 6);          // 外描边
+    strokePath('rgba(0,0,0,0.55)', 3.2);        // 内芯
+    if (ctx.setLineDash) ctx.setLineDash([6, 5]);
+    strokePath(hit ? 'rgba(140,255,175,0.95)' : 'rgba(255,140,140,0.95)', 2.2);
+    if (ctx.setLineDash) ctx.setLineDash([]);
+
+    // 落点圈：命中绿 / 落水红，带白描边保证对比；不够远时给个文字提示
+    ctx.beginPath();
+    ctx.arc(target, landY - 3, 9, 0, Math.PI * 2);
+    ctx.fillStyle = hit ? 'rgba(64,192,87,0.92)' : 'rgba(240,82,82,0.92)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+    ctx.lineWidth = 2.2;
+    ctx.stroke();
+
+    if (!hit) {
+      ctx.font = 'bold 12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(0,0,0,0.45)';
+      var tip = '再按久一点';
+      var tw = ctx.measureText(tip).width;
+      roundRect(ctx, target - tw / 2 - 7, landY - 34, tw + 14, 18, 9);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.fillText(tip, target, landY - 21);
+    }
+    ctx.restore();
+  };
+
+  Renderer.prototype._particles = function (g) {
+    var ctx = this.ctx;
+    for (var i = 0; i < g.particles.length; i++) {
+      var p = g.particles[i];
+      ctx.globalAlpha = Math.max(0, Math.min(1, p.life * 2));
+      ctx.fillStyle = p.color;
+      circle(ctx, p.x, p.y, p.r);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  };
+
+  Renderer.prototype._floats = function (g) {
+    var ctx = this.ctx;
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 15px sans-serif';
+    for (var i = 0; i < g.floatTexts.length; i++) {
+      var f = g.floatTexts[i];
+      ctx.globalAlpha = Math.min(1, f.life);
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = '#fff';
+      ctx.strokeText(f.text, f.x, f.y);
+      ctx.fillStyle = f.color;
+      ctx.fillText(f.text, f.x, f.y);
+    }
+    ctx.globalAlpha = 1;
+  };
+
+  // ---------- 绘制工具 ----------
+  function circle(ctx, x, y, r) { ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); }
+
+  // 五角星路径（调用方负责 fill/stroke）
+  function star(ctx, cx, cy, spikes, outerR, innerR) {
+    var rot = -Math.PI / 2;
+    var step = Math.PI / spikes;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(rot) * outerR, cy + Math.sin(rot) * outerR);
+    for (var i = 0; i < spikes; i++) {
+      rot += step;
+      ctx.lineTo(cx + Math.cos(rot) * innerR, cy + Math.sin(rot) * innerR);
+      rot += step;
+      ctx.lineTo(cx + Math.cos(rot) * outerR, cy + Math.sin(rot) * outerR);
+    }
+    ctx.closePath();
+  }
+  // 一次填充多个圆：每个圆各自 beginPath + fill，避免后一个 beginPath 把前一个路径冲掉
+  function circles(ctx, list) {
+    for (var i = 0; i < list.length; i += 3) {
+      ctx.beginPath();
+      ctx.arc(list[i], list[i + 1], list[i + 2], 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  function cross(ctx, x, y, r) {
+    ctx.beginPath();
+    ctx.moveTo(x - r, y - r); ctx.lineTo(x + r, y + r);
+    ctx.moveTo(x + r, y - r); ctx.lineTo(x - r, y + r);
+    ctx.stroke();
+  }
+  function roundRect(ctx, x, y, w, h, r) {
+    r = Math.min(r, Math.abs(w) / 2, Math.abs(h) / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  }
+
+  Renderer.circle = circle;
+  Renderer.roundRect = roundRect;
+  root.GLHRender = Renderer;
+  if (typeof module === 'object' && module.exports) module.exports = Renderer;
+})(typeof globalThis !== 'undefined' ? globalThis : this);
+  });
+
+  __def('/shared/platform/env.js', function (require, module, exports) {
+/**
+ * 哥俩好 · 环境判断层
+ *
+ * 全项目只有这里判断「我在哪跑」，其他任何文件都不许直接读 wx / window。
+ * 所有平台差异都必须从这里拿，这样共用逻辑才能两端通用。
+ *
+ * 用法：
+ *   var P = require('/shared/shared/platform/env.js');
+ *   if (P.isMiniProgram) { ... }
+ */
+(function (root) {
+  'use strict';
+
+  // ---------- 环境识别 ----------
+  // wx 存在且有 getSystemInfoSync -> 微信小程序
+  var hasWx = typeof wx !== 'undefined' && typeof wx.getSystemInfoSync === 'function';
+  // 有 window + document -> 浏览器
+  var hasDom = typeof window !== 'undefined' && typeof document !== 'undefined';
+
+  var kind = hasWx ? 'miniprogram' : (hasDom ? 'web' : 'unknown');
+
+  // ---------- 屏幕信息 ----------
+  function screenInfo() {
+    if (hasWx) {
+      var info = wx.getWindowInfo ? wx.getWindowInfo() : wx.getSystemInfoSync();
+      return {
+        width: info.windowWidth || 375,
+        height: info.windowHeight || 667,
+        dpr: Math.min(info.pixelRatio || 2, 3),
+        safeTop: (info.safeArea && info.safeArea.top) || 0,
+        safeBottom: info.screenHeight && info.safeArea
+          ? (info.screenHeight - info.safeArea.bottom)
+          : 0
+      };
+    }
+    if (hasDom) {
+      return {
+        width: window.innerWidth,
+        height: window.innerHeight,
+        dpr: Math.min(window.devicePixelRatio || 1, 2),
+        safeTop: 0,
+        safeBottom: 0
+      };
+    }
+    return { width: 375, height: 667, dpr: 2, safeTop: 0, safeBottom: 0 };
+  }
+
+  // ---------- 存储 ----------
+  // 统一成同步接口，key 前加前缀避免和其他数据打架
+  var PREFIX = 'glh_';
+
+  function getStorage(key, def) {
+    try {
+      if (hasWx) {
+        var v = wx.getStorageSync(PREFIX + key);
+        return (v === '' || v === undefined || v === null) ? def : v;
+      }
+      if (hasDom && window.localStorage) {
+        var s = window.localStorage.getItem(PREFIX + key);
+        return s === null ? def : JSON.parse(s);
+      }
+    } catch (e) {}
+    return def;
+  }
+
+  function setStorage(key, val) {
+    try {
+      if (hasWx) { wx.setStorageSync(PREFIX + key, val); return true; }
+      if (hasDom && window.localStorage) {
+        window.localStorage.setItem(PREFIX + key, JSON.stringify(val));
+        return true;
+      }
+    } catch (e) {}
+    return false;
+  }
+
+  // ---------- 提示与震动 ----------
+  function toast(msg, ms) {
+    if (hasWx) {
+      wx.showToast({ title: String(msg), icon: 'none', duration: ms || 1800 });
+      return;
+    }
+    // 网页端：由 router 注入的 UI 钩子接管（见 setToastHandler）
+    if (toastHandler) toastHandler(String(msg), ms || 1800);
+  }
+
+  var toastHandler = null;
+  function setToastHandler(fn) { toastHandler = fn; }
+
+  function vibrate(type) {
+    if (hasWx && wx.vibrateShort) {
+      try { wx.vibrateShort({ type: type || 'light' }); } catch (e) {}
+      return;
+    }
+    if (hasDom && navigator.vibrate) {
+      try { navigator.vibrate(type === 'heavy' ? 30 : 12); } catch (e) {}
+    }
+  }
+
+  // ---------- 分享 / 邀请 ----------
+  // 返回一个「分享出去」的函数；网页和小程序的实现完全不同
+  function shareRoom(roomCode, onWebShare) {
+    if (hasWx) {
+      // 小程序靠 onShareAppMessage 主动触发，见 pages/room
+      return { needWxShare: true, roomCode: roomCode };
+    }
+    // 网页：拼一个带 ?room= 的链接
+    var link = '';
+    if (hasDom) {
+      link = window.location.origin + window.location.pathname + '?room=' + roomCode;
+    }
+    if (onWebShare) onWebShare(link, roomCode);
+    return { needWxShare: false, link: link, roomCode: roomCode };
+  }
+
+  // ---------- 剪贴板 ----------
+  function copyText(text) {
+    if (hasWx) {
+      wx.setClipboardData({ data: String(text) });
+      return Promise.resolve(true);
+    }
+    if (hasDom && navigator.clipboard) {
+      return navigator.clipboard.writeText(String(text)).then(function () { return true; }).catch(function () { return false; });
+    }
+    return Promise.resolve(false);
+  }
+
+  // ---------- 页面跳转 ----------
+  // 网页是多屏切换，小程序是页面栈，这里统一成一个出口
+  var navHandler = null;
+  function setNavHandler(fn) { navHandler = fn; }
+
+  function go(page, params) {
+    params = params || {};
+    if (hasWx) {
+      var qs = Object.keys(params).map(function (k) {
+        return k + '=' + encodeURIComponent(params[k]);
+      }).join('&');
+      var url = '/pages/' + page + '/' + page + (qs ? '?' + qs : '');
+      if (page === 'game') wx.redirectTo({ url: url });
+      else wx.navigateTo({ url: url });
+      return;
+    }
+    if (navHandler) navHandler(page, params);
+  }
+
+  // 直达某页并清掉返回栈（回首页、结算后重来都用它）
+  function redirect(name, params) {
+    params = params || {};
+    if (hasWx) {
+      var qs = Object.keys(params).map(function (k) {
+        return k + '=' + encodeURIComponent(params[k]);
+      }).join('&');
+      wx.reLaunch({ url: '/pages/' + name + '/' + name + (qs ? '?' + qs : '') });
+      return;
+    }
+    if (navHandler) navHandler(name, params);
+  }
+
+  function back(page) {
+    if (hasWx) {
+      wx.navigateBack({ delta: 1 });
+      return;
+    }
+    if (navHandler) navHandler(page || 'home', {});
+  }
+
+  module.exports = {
+    kind: kind,
+    isMiniProgram: kind === 'miniprogram',
+    isWeb: kind === 'web',
+    isUnknown: kind === 'unknown',
+
+    screenInfo: screenInfo,
+    getStorage: getStorage,
+    setStorage: setStorage,
+    toast: toast,
+    setToastHandler: setToastHandler,
+    vibrate: vibrate,
+    shareRoom: shareRoom,
+    copyText: copyText,
+    go: go,
+    redirect: redirect,
+    back: back,
+    setNavHandler: setNavHandler
+  };
+})(typeof globalThis !== 'undefined' ? globalThis : this);
+  });
+
+  __def('/shared/platform/routes.js', function (require, module, exports) {
+/**
+ * 哥俩好 · 路由表
+ *
+ * 业务代码只说「去 game 页」，不说具体 URL / 页面路径，
+ * 由这里按环境翻译成真实地址。加页面只改这一处。
+ */
+
+// 逻辑页面名 → 两端实现
+var ROUTES = {
+  home: {
+    mp: '/pages/index/index',
+    web: 'home',          // 网页多屏切换，对应 #scrHome
+    title: '哥俩好'
+  },
+  room: {
+    mp: '/pages/room/room',
+    web: 'room',          // #scrRoom
+    title: '房间'
+  },
+  game: {
+    mp: '/pages/game/game',
+    web: 'game',          // 画布本身，无独立屏
+    title: '游戏中'
+  },
+  how: {
+    // 小程序里玩法说明是首页的弹层，没有独立页面；取 mp 字段前先看 isOverlay
+    mp: '/pages/index/index',
+    web: 'how',           // #scrHow
+    title: '玩法说明',
+    overlay: true         // 形态差异：小程序用弹层，网页用独立屏
+  },
+  over: {
+    mp: '/pages/game/game',   // 小程序里结算也是游戏页内的弹层
+    web: 'over',              // #scrOver
+    title: '本局结束',
+    overlay: true
+  }
+};
+
+// 小程序里这些页面用 redirectTo（不留返回栈）
+var REDIRECT_PAGES = { game: true, home: true };
+
+// 小程序里是"弹层"而非"页面"的路线：go() 不跳转，交给页面自己开弹层
+var OVERLAY_ROUTES = { how: true, over: true };
+
+function get(name, env) {
+  var r = ROUTES[name];
+  if (!r) return null;
+  return env.isMiniProgram ? r.mp : r.web;
+}
+
+function buildMpUrl(name, params) {
+  var r = ROUTES[name];
+  if (!r) return null;
+  var qs = Object.keys(params || {}).map(function (k) {
+    return k + '=' + encodeURIComponent(params[k]);
+  }).join('&');
+  return r.mp + (qs ? '?' + qs : '');
+}
+
+function isRedirect(name) { return !!REDIRECT_PAGES[name]; }
+
+// 该路线在当前环境是弹层（只有小程序端成立，网页端都是独立屏）
+function isOverlay(name, env) {
+  if (!env || !env.isMiniProgram) return false;
+  return !!OVERLAY_ROUTES[name];
+}
+
+function title(name) {
+  var r = ROUTES[name];
+  return r ? r.title : '哥俩好';
+}
+
+/**
+ * 判断网页端是否从邀请链接进来
+ * 支持 ?room=1234 或 #room=1234
+ */
+function readInviteCode(search) {
+  if (!search) return '';
+  var m = String(search).match(/[?&#]room=(\d{4})/);
+  return m ? m[1] : '';
+}
+
+module.exports = {
+  ROUTES: ROUTES,
+  get: get,
+  buildMpUrl: buildMpUrl,
+  isRedirect: isRedirect,
+  isOverlay: isOverlay,
+  title: title,
+  readInviteCode: readInviteCode
+};
+  });
+
+  __def('/shared/platform/router.js', function (require, module, exports) {
+/**
+ * 哥俩好 · 统一导航
+ *
+ * 两端跳转差异全在这里消化：
+ *   小程序：页面栈，navigateTo / redirectTo
+ *   网页  ：单页多屏切换，回调给 app.js 处理
+ *
+ * 业务代码统一调 Router.go('game', {mode:'host', seed:123})。
+ */
+(function (root) {
+  'use strict';
+
+  var env = require('/shared/platform/env.js');
+  var routes = require('/shared/platform/routes.js');
+
+  // 网页端注入的屏幕切换函数
+  var webHandler = null;
+
+  function setWebHandler(fn) { webHandler = fn; }
+
+  // 弹层类路线的接管者（小程序端由各页面自己注册，比如首页的玩法说明弹层）
+  var overlayHandler = null;
+  function setOverlayHandler(fn) { overlayHandler = fn; }
+
+  function go(name, params) {
+    params = params || {};
+
+    if (env.isMiniProgram) {
+      // 小程序里 how / over 是弹层而不是独立页面：不跳转，交给当前页面开弹层。
+      // 没人接管就静默忽略 —— 硬跳 mp 路径会跳到首页，反而像"点了没反应"。
+      if (routes.isOverlay(name, env)) {
+        if (overlayHandler) overlayHandler(name, params);
+        return;
+      }
+      var url = routes.buildMpUrl(name, params);
+      if (!url) { console.warn('[router] 未知页面:', name); return; }
+      var api = routes.isRedirect(name) ? wx.redirectTo : wx.navigateTo;
+      api({
+        url: url,
+        fail: function (e) {
+          // 页面栈满了（10 层）自动降级成 redirect
+          if (e && /limit/.test(e.errMsg || '')) {
+            wx.redirectTo({ url: url });
+          } else {
+            console.error('[router] 跳转失败', e);
+          }
+        }
+      });
+      return;
+    }
+
+    if (webHandler) webHandler(name, params);
+  }
+
+  // 清空返回栈直达（回首页、结算后重来）。小程序走 reLaunch，网页走屏切换。
+  function replace(name, params) {
+    params = params || {};
+    if (env.isMiniProgram) {
+      if (routes.isOverlay(name, env)) {
+        if (overlayHandler) overlayHandler(name, params);
+        return;
+      }
+      var url = routes.buildMpUrl(name, params);
+      if (!url) return;
+      wx.reLaunch({
+        url: url,
+        fail: function (e) { console.error('[router] reLaunch 失败', e); }
+      });
+      return;
+    }
+    if (webHandler) webHandler(name, params);
+  }
+
+  function back(fallback) {
+    if (env.isMiniProgram) {
+      wx.navigateBack({
+        delta: 1,
+        fail: function () {
+          if (fallback) go(fallback);
+          else wx.reLaunch({ url: '/pages/index/index' });
+        }
+      });
+      return;
+    }
+    if (webHandler) webHandler(fallback || 'home', {});
+  }
+
+  // 网页端读写 URL 里的 ?room=xxx，小程序端返回空
+  function getInviteCode() {
+    if (env.isMiniProgram) return '';
+    if (typeof location === 'undefined') return '';
+    return routes.readInviteCode(location.search + location.hash);
+  }
+
+  function setInviteCode(code) {
+    if (env.isMiniProgram || typeof history === 'undefined') return;
+    try {
+      var url = code
+        ? location.pathname + '?room=' + code
+        : location.pathname;
+      history.replaceState({}, '', url);
+    } catch (e) {}
+  }
+
+  module.exports = {
+    go: go,
+    replace: replace,
+    back: back,
+    setWebHandler: setWebHandler,
+    setOverlayHandler: setOverlayHandler,
+    isOverlay: function (name) { return routes.isOverlay(name, env); },
+    getInviteCode: getInviteCode,
+    setInviteCode: setInviteCode,
+    routes: routes
+  };
+})(typeof globalThis !== 'undefined' ? globalThis : this);
+  });
+
+  __def('/shared/platform/sfx-base.js', function (require, module, exports) {
+/**
+ * 音效 · 共用合成逻辑
+ *
+ * 网页和小程序的 WebAudio 接口几乎一致（小程序基础库 2.19+ 支持
+ * wx.createWebAudioContext，接口照抄 W3C 标准），所以合成代码只写一份，
+ * 差异只在「怎么拿到 AudioContext」。
+ *
+ * 子类只需实现 _createAC()。
+ */
+(function (root) {
+  'use strict';
+
+  function SfxBase() {
+    this.ctx = null;
+    this.enabled = true;
+    this._tried = false;
+  }
+
+  // 子类覆盖
+  SfxBase.prototype._createAC = function () { return null; };
+
+  SfxBase.prototype._ac = function () {
+    if (!this.enabled) return null;
+    if (this._tried) return this.ctx;
+    this._tried = true;
+    try { this.ctx = this._createAC(); } catch (e) { this.ctx = null; }
+    if (this.ctx && this.ctx.state === 'suspended' && this.ctx.resume) {
+      try { this.ctx.resume(); } catch (e) {}
+    }
+    return this.ctx;
+  };
+
+  SfxBase.prototype._tone = function (freq, dur, type, gain, delay, slideTo) {
+    var ac = this._ac();
+    if (!ac) return;
+    try {
+      var t0 = ac.currentTime + (delay || 0);
+      var o = ac.createOscillator();
+      var g = ac.createGain();
+      o.type = type || 'sine';
+      o.frequency.setValueAtTime(freq, t0);
+      if (slideTo && o.frequency.exponentialRampToValueAtTime) {
+        o.frequency.exponentialRampToValueAtTime(slideTo, t0 + dur);
+      }
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(gain || 0.12, t0 + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      o.connect(g);
+      g.connect(ac.destination);
+      o.start(t0);
+      o.stop(t0 + dur + 0.02);
+    } catch (e) {
+      // 某些机型 WebAudio 有限制，静默降级，不影响玩法
+    }
+  };
+
+  // 音色表：只写一份，两端共用
+  SfxBase.prototype.play = function (name) {
+    switch (name) {
+      case 'charge': this._tone(220, 0.09, 'triangle', 0.05, 0, 320); break;
+      case 'jump': this._tone(420, 0.16, 'triangle', 0.1, 0, 760); break;
+      case 'land': this._tone(180, 0.1, 'sine', 0.08, 0, 110); break;
+      case 'coin':
+        this._tone(880, 0.09, 'square', 0.05);
+        this._tone(1320, 0.12, 'square', 0.045, 0.07);
+        break;
+      case 'wet': this._tone(300, 0.28, 'sine', 0.1, 0, 90); break;
+      case 'rescue':
+        this._tone(523, 0.1, 'triangle', 0.09);
+        this._tone(659, 0.1, 'triangle', 0.09, 0.09);
+        this._tone(784, 0.18, 'triangle', 0.09, 0.18);
+        break;
+      case 'hit': this._tone(160, 0.18, 'sawtooth', 0.08, 0, 70); break;
+      case 'switch': this._tone(600, 0.06, 'sine', 0.05); break;
+      case 'perfect':
+        this._tone(523, 0.08, 'triangle', 0.07);
+        this._tone(784, 0.15, 'triangle', 0.07, 0.07);
+        break;
+      case 'gold':
+        this._tone(1046, 0.07, 'sine', 0.05);
+        this._tone(1568, 0.18, 'sine', 0.05, 0.06);
+        break;
+      case 'respawn':
+        this._tone(660, 0.22, 'sine', 0.08, 0, 180);
+        break;
+      case 'checkpoint':
+        this._tone(392, 0.1, 'triangle', 0.08);
+        this._tone(523, 0.18, 'triangle', 0.08, 0.09);
+        break;
+      case 'over':
+        this._tone(523, 0.16, 'triangle', 0.09);
+        this._tone(392, 0.16, 'triangle', 0.09, 0.15);
+        this._tone(294, 0.3, 'triangle', 0.09, 0.3);
+        break;
+      case 'ready':
+        this._tone(660, 0.1, 'sine', 0.07);
+        this._tone(880, 0.14, 'sine', 0.07, 0.1);
+        break;
+    }
+  };
+
+  /**
+   * 解锁音频。必须在用户手势回调里调一次。
+   * iOS / 微信都要求音频在用户手势里"激活"过，否则首次 play 会被静音丢掉。
+   * 返回 Promise(true) 表示可用。
+   */
+  SfxBase.prototype.unlock = function () {
+    var ac = this._ac();
+    if (!ac) return Promise.resolve(false);
+    // 有些实现首次解锁时给了个空的 buffer source 才真正启动
+    try {
+      if (ac.state === 'suspended' && ac.resume) ac.resume();
+    } catch (e) {}
+    return Promise.resolve(true);
+  };
+
+  SfxBase.prototype.resume = function () {
+    var ac = this.ctx;
+    if (ac && ac.state === 'suspended' && ac.resume) {
+      try { ac.resume(); } catch (e) {}
+    }
+  };
+
+  SfxBase.prototype.setEnabled = function (on) {
+    this.enabled = !!on;
+    if (!on && this.ctx && this.ctx.suspend) {
+      try { this.ctx.suspend(); } catch (e) {}
+    }
+  };
+
+  SfxBase.prototype.destroy = function () {
+    if (this.ctx && this.ctx.close) {
+      try { this.ctx.close(); } catch (e) {}
+    }
+    this.ctx = null;
+  };
+
+  if (typeof module === 'object' && module.exports) module.exports = SfxBase;
+  root.GLHSfxBase = SfxBase;
+})(typeof globalThis !== 'undefined' ? globalThis : this);
+  });
+
+  __def('/shared/platform/sfx.web.js', function (require, module, exports) {
+/**
+ * 音效 · 网页端
+ * 用浏览器原生 AudioContext。
+ */
+(function (root) {
+  'use strict';
+
+  var Base = require('/shared/platform/sfx-base.js');
+
+  function Sfx() {
+    Base.call(this);
+  }
+  Sfx.prototype = Object.create(Base.prototype);
+  Sfx.prototype.constructor = Sfx;
+
+  Sfx.prototype._createAC = function () {
+    var AC = root.AudioContext || root.webkitAudioContext;
+    if (!AC) return null;
+    return new AC();
+  };
+
+  module.exports = Sfx;
+})(typeof globalThis !== 'undefined' ? globalThis : this);
+  });
+
+  __def('/shared/platform/sfx.mp.js', function (require, module, exports) {
+/**
+ * 音效 · 小程序端
+ * 基础库 2.19.0+ 提供 wx.createWebAudioContext，接口与 W3C WebAudio 一致。
+ * 低版本或部分机型不支持时静音降级 —— 玩法完全不受影响。
+ */
+(function (root) {
+  'use strict';
+
+  var Base = require('/shared/platform/sfx-base.js');
+
+  function Sfx() {
+    Base.call(this);
+  }
+  Sfx.prototype = Object.create(Base.prototype);
+  Sfx.prototype.constructor = Sfx;
+
+  Sfx.prototype._createAC = function () {
+    if (typeof wx === 'undefined') return null;
+    if (!wx.createWebAudioContext) return null;   // 基础库过低，静音
+    return wx.createWebAudioContext();
+  };
+
+  module.exports = Sfx;
+})(typeof globalThis !== 'undefined' ? globalThis : this);
+  });
+
+  __def('/shared/platform/canvas.web.js', function (require, module, exports) {
+/**
+ * 画布适配 · 网页端
+ *
+ * 网页上 <canvas> 已经在 HTML 里，直接拿来用。
+ * 关键是按 devicePixelRatio 放大 backing store，否则高分屏画面发虚。
+ */
+(function (root) {
+  'use strict';
+
+  function init(opts) {
+    return new Promise(function (resolve, reject) {
+      var el = opts.canvas;
+      if (!el && opts.selector) el = document.querySelector(opts.selector);
+      if (!el) el = document.getElementById('cv');
+      if (!el) { reject(new Error('找不到 canvas 元素')); return; }
+
+      var ctx = el.getContext('2d');
+      var dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+      // 画布铺满可视区
+      var w = window.innerWidth;
+      var h = window.innerHeight;
+      el.width = Math.round(w * dpr);
+      el.height = Math.round(h * dpr);
+      el.style.width = w + 'px';
+      el.style.height = h + 'px';
+
+      // 用 CSS 尺寸作为逻辑坐标系，绘制代码就完全不用管 dpr
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      resolve({
+        ctx: ctx,
+        canvas: el,
+        width: w,
+        height: h,
+        dpr: dpr,
+        // 网页端 resize 时重建一次
+        resize: function () {
+          var nw = window.innerWidth, nh = window.innerHeight;
+          el.width = Math.round(nw * dpr);
+          el.height = Math.round(nh * dpr);
+          el.style.width = nw + 'px';
+          el.style.height = nh + 'px';
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          return { width: nw, height: nh, dpr: dpr };
+        }
+      });
+    });
+  }
+
+  module.exports = { init: init };
+})(typeof globalThis !== 'undefined' ? globalThis : this);
+  });
+
+  __def('/shared/platform/canvas.mp.js', function (require, module, exports) {
+/**
+ * 画布适配 · 小程序端
+ *
+ * 小程序和网页最大的区别：canvas 不是 DOM 元素，必须用 SelectorQuery 拿到 node。
+ * 注意：
+ *   1. 必须用 type="2d"（基础库 2.9.0+），老的 wx.createCanvasContext 性能差且接口不同
+ *   2. 动画要用 canvas.requestAnimationFrame，不能用全局 raf
+ *   3. 尺寸同样按 pixelRatio 放大
+ */
+(function (root) {
+  'use strict';
+
+  function init(opts) {
+    return new Promise(function (resolve, reject) {
+      var page = opts.page;
+      if (!page) { reject(new Error('小程序端创建画布必须传 page 实例')); return; }
+
+      var selector = opts.selector || '#cv';
+
+      wx.createSelectorQuery()
+        .in(page)
+        .select(selector)
+        .fields({ node: true, size: true })
+        .exec(function (res) {
+          var r = res && res[0];
+          if (!r || !r.node) {
+            reject(new Error('找不到 canvas 节点：' + selector + '（检查 wxml 里是否写了 type="2d"）'));
+            return;
+          }
+
+          var canvas = r.node;
+          var ctx = canvas.getContext('2d');
+          var dpr = Math.min((wx.getWindowInfo ? wx.getWindowInfo() : wx.getSystemInfoSync()).pixelRatio || 2, 3);
+
+          // fields 拿到的 size 是 CSS 尺寸
+          var w = r.width;
+          var h = r.height;
+
+          canvas.width = Math.round(w * dpr);
+          canvas.height = Math.round(h * dpr);
+          ctx.scale(dpr, dpr);
+
+          resolve({
+            ctx: ctx,
+            canvas: canvas,
+            width: w,
+            height: h,
+            dpr: dpr,
+
+            // 小程序端动画帧走 canvas 自己的 raf
+            raf: function (cb) { return canvas.requestAnimationFrame(cb); },
+            cancelRaf: function (id) { canvas.cancelAnimationFrame(id); },
+
+            // 转成临时图片（分享/截图用，暂未用到）
+            toTempFile: function () {
+              return new Promise(function (res2) {
+                wx.canvasToTempFilePath({ canvas: canvas, success: res2, fail: res2 });
+              });
+            }
+          });
+        });
+    });
+  }
+
+  module.exports = { init: init };
+})(typeof globalThis !== 'undefined' ? globalThis : this);
+  });
+
+  __def('/shared/net/contract.js', function (require, module, exports) {
+/**
+ * 网络适配器 · 契约与公用基类
+ *
+ * 两端实现（net/ws.js、net/cloud.js）都必须满足这套接口。
+ * 业务代码只依赖这套接口，换实现不用改业务代码。
+ *
+ * ============ 契约 ============
+ *
+ * 状态类
+ *   connect()                  → Promise          建立连接（云开发可直接 resolve）
+ *   isOpen()                   → boolean          当前是否连得上
+ *   reconnect()                → Promise<boolean>  断线重连，成功 true
+ *   leave()                    → Promise          离开房间
+ *
+ * 房间类
+ *   createRoom(meta)           → Promise<roomCode>
+ *   joinRoom(code, meta)       → Promise<{roomCode, seat, view}>
+ *   setReady(bool)             → Promise          准备 / 取消（可反复切换）
+ *   start(seed)                → Promise          房主宣布开局
+ *
+ * 同步类
+ *   pullState()                → Promise<view>    拉房间快照
+ *   pushState(state, ready)    → Promise          房主推状态
+ *   sendOp(op)                 → Promise          发操作
+ *
+ * 事件
+ *   onOp(cb)                   cb(op)             收到对方操作
+ *   onStatus(cb)               cb(status)         online | offline | lost | peer-left | peer-join
+ *
+ * ============ view 结构（归一化后） ============
+ *   {
+ *     roomCode: '1234',
+ *     players: [{name, avatar, score}, {name, avatar, score}],  // 按房间座位号索引
+ *     ready:  {0: bool, 1: bool},    // 房间座位号：房主 0、好友 1
+ *     online: {0: bool, 1: bool},
+ *     isHost: bool,
+ *     state:  {live, seed, s, snap} | null,
+ *     ops:    [op]                   // 待消费的操作（云开发用）
+ *   }
+ *
+ *   注意：两端底层返回的 online 可能是数组 [bool,bool]，isOnline() 两种都兼容。
+ *
+ * ⚠️ 两套座位编号，务必分清：
+ *     房间座位号 roomSeat：房主 0、好友 1  ← ready / online / players 用它
+ *     游戏内猴子号 gameSeat：房主 1（前排）、好友 0（后排）← 渲染和标签用它
+ *     读 ready/online 一律用 1 - myRoomSeat()
+ */
+(function (root) {
+  'use strict';
+
+  function NetBase() {
+    this.roomCode = null;
+    this.seat = 0;          // 房间座位号（0 房主 / 1 好友）
+    this.opCb = null;
+    this.statusCb = null;
+    this.lastError = '';
+  }
+
+  NetBase.prototype.onOp = function (cb) { this.opCb = cb; };
+  NetBase.prototype.onStatus = function (cb) { this.statusCb = cb; };
+  NetBase.prototype._status = function (s) { if (this.statusCb) this.statusCb(s); };
+  NetBase.prototype._emitOp = function (op) { if (this.opCb && op) this.opCb(op); };
+
+  // 我的房间座位号
+  NetBase.prototype.myRoomSeat = function () { return this.seat; };
+  // 房间座位号 → 游戏内猴子号（房主 1、好友 0）
+  NetBase.prototype.roomSeatToGameSeat = function (roomSeat) {
+    return roomSeat === 0 ? 1 : 0;
+  };
+
+  // 从 view 里安全读某座位是否 ready（对象或数组都兼容）
+  NetBase.prototype.isReady = function (view, roomSeat) {
+    if (!view || !view.ready) return false;
+    return !!view.ready[roomSeat];
+  };
+
+  // 在线状态：服务端用数组 [bool,bool]，云函数归一化成对象 {0,1}，两种都吃
+  NetBase.prototype.isOnline = function (view, roomSeat) {
+    if (!view || view.online == null) return false;
+    var o = view.online;
+    if (Array.isArray(o)) return !!o[roomSeat];
+    return !!o[roomSeat];
+  };
+
+  // 双方都准备好了才算能开局
+  NetBase.prototype.bothReady = function (view) {
+    return this.isReady(view, 0) && this.isReady(view, 1);
+  };
+
+  if (typeof module === 'object' && module.exports) module.exports = NetBase;
+  root.GLHNetBase = NetBase;
+})(typeof globalThis !== 'undefined' ? globalThis : this);
+  });
+
+  __def('/shared/net/ws.js', function (require, module, exports) {
+/**
+ * 网络适配器 · 网页端（原生 WebSocket）
+ *
+ * 用于浏览器直连自建服务端，延迟最低（<100ms）。
+ * 满足了 net/contract.js 里的全部接口。
+ */
+(function (root) {
+  'use strict';
+
+  var Base = require('/shared/net/contract.js');
+
+  function WsAdapter(url, opts) {
+    Base.call(this);
+    this.url = url;
+    this.opts = opts || {};
+    this.ws = null;
+    this._pending = {};
+    this._reqId = 1;
+    this._queue = [];
+    this.everOpened = false;   // 是否成功连上过（区分"首次连不上"和"连过又断"）
+    this.closedByMe = false;   // 主动离开时不触发"掉线"提示
+  }
+  WsAdapter.prototype = Object.create(Base.prototype);
+  WsAdapter.prototype.constructor = WsAdapter;
+
+  // ---------------- 连接 ----------------
+  WsAdapter.prototype.connect = function () {
+    var self = this;
+    if (this.ws && this.ws.readyState === 1) return Promise.resolve();
+    return new Promise(function (resolve, reject) {
+      var ws;
+      try { ws = new WebSocket(self.url); } catch (e) { reject(e); return; }
+      self.ws = ws;
+      var settled = false;
+
+      // 连不上时给个上限，别让界面永远"正在连接"
+      var connTimer = setTimeout(function () {
+        if (settled) return;
+        settled = true;
+        try { ws.close(); } catch (e) {}
+        reject(new Error('连接服务器超时，请检查网络后重试'));
+      }, 12000);
+
+      ws.onopen = function () {
+        settled = true;
+        self.everOpened = true;
+        clearTimeout(connTimer);
+        self._status('online');
+        while (self._queue.length) ws.send(self._queue.shift());
+        resolve();
+      };
+      ws.onmessage = function (ev) {
+        var msg;
+        try { msg = JSON.parse(ev.data); } catch (e) { return; }
+        if (msg.rid && self._pending[msg.rid]) {
+          self._pending[msg.rid](msg.err ? Promise.reject(new Error(msg.err)) : msg.data);
+          delete self._pending[msg.rid];
+          return;
+        }
+        if (msg.t === 'op') self._emitOp(msg.data);
+        if (msg.t === 'peer') self._status(msg.data === 'join' ? 'peer-join' : 'peer-left');
+      };
+      ws.onclose = function () {
+        clearTimeout(connTimer);
+        if (!self.closedByMe) self._status(settled && self.everOpened ? 'lost' : 'offline');
+        if (!settled) { settled = true; reject(new Error('连不上服务器，请检查网络')); }
+      };
+      ws.onerror = function () {
+        clearTimeout(connTimer);
+        if (!settled) { settled = true; reject(new Error('连不上服务器，请检查网络')); }
+      };
+    });
+  };
+
+  WsAdapter.prototype.isOpen = function () {
+    return !!(this.ws && this.ws.readyState === 1);
+  };
+
+  // ---------------- 消息收发 ----------------
+  WsAdapter.prototype._send = function (payload, timeoutMs) {
+    var self = this;
+    return new Promise(function (resolve, reject) {
+      payload.rid = self._reqId++;
+      var done = false;
+      var timer = setTimeout(function () {
+        if (done) return;
+        done = true;
+        delete self._pending[payload.rid];
+        reject(new Error('网络超时'));
+      }, timeoutMs || 6000);
+
+      self._pending[payload.rid] = function (v) {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        resolve(v);
+      };
+
+      var raw = JSON.stringify(payload);
+      if (self.isOpen()) self.ws.send(raw);
+      else if (!self.everOpened) self._queue.push(raw);   // 还在建连，先排队
+      else {
+        // 连过又断了：不再排队（排了也没人发），立刻报错，交给上层重连
+        done = true;
+        clearTimeout(timer);
+        reject(new Error('连接已断开'));
+      }
+    });
+  };
+
+  // ---------------- 视图归一化 ----------------
+  // 服务端 roomView 返回 {roomCode, players, ready, state, online:[bool,bool]}
+  // 这里补齐契约要求的字段，让业务层两端写法一致
+  WsAdapter.prototype._norm = function (d) {
+    if (!d) return null;
+    var seats = d.seats;
+    var ready = { 0: false, 1: false };
+    var online = { 0: false, 1: false };
+
+    if (seats && seats.length) {
+      // 云开发式结构（理论上不会走到，防御性兼容）
+      for (var i = 0; i < 2; i++) {
+        var s = seats[i];
+        if (!s) continue;
+        ready[i] = !!s.ready;
+        online[i] = !!s.online;
+      }
+    } else {
+      ready = d.ready || ready;
+      if (Array.isArray(d.online)) {
+        online = { 0: !!d.online[0], 1: !!d.online[1] };
+      } else if (d.online) {
+        online = d.online;
+      }
+    }
+
+    return {
+      roomCode: d.roomCode || this.roomCode,
+      players: d.players || [{ name: '', avatar: '', score: 0 }, { name: '', avatar: '', score: 0 }],
+      ready: ready,
+      online: online,
+      isHost: this.seat === 0,
+      state: d.state || null,
+      ops: d.ops || []
+    };
+  };
+
+  // ---------------- 房间 ----------------
+  WsAdapter.prototype.createRoom = function (meta) {
+    var self = this;
+    return this.connect().then(function () {
+      return self._send({ t: 'create', meta: meta || {} });
+    }).then(function (d) {
+      self.roomCode = d.roomCode;
+      self.seat = 0;
+      return d.roomCode;
+    }).catch(function (e) {
+      self.lastError = (e && e.message) || '建房失败';
+      throw e;
+    });
+  };
+
+  WsAdapter.prototype.joinRoom = function (code, meta) {
+    var self = this;
+    return this.connect().then(function () {
+      return self._send({ t: 'join', roomCode: code, meta: meta || {} });
+    }).then(function (d) {
+      self.roomCode = d.roomCode;
+      self.seat = d.seat;
+      return { roomCode: d.roomCode, seat: d.seat, view: self._norm(d.view) };
+    }).catch(function (e) {
+      self.lastError = (e && e.message) || '进房失败';
+      throw e;
+    });
+  };
+
+  WsAdapter.prototype.setReady = function (ready) {
+    return this._send({ t: 'ready', roomCode: this.roomCode, ready: !!ready }).catch(function () {});
+  };
+
+  WsAdapter.prototype.start = function (seed) {
+    return this._send({ t: 'state', roomCode: this.roomCode, state: { live: true, seed: seed, s: 0 } });
+  };
+
+  WsAdapter.prototype.pushState = function (snap, ready) {
+    return this._send({ t: 'state', roomCode: this.roomCode, state: snap, ready: ready }).catch(function () {});
+  };
+
+  WsAdapter.prototype.pullState = function () {
+    var self = this;
+    return this._send({ t: 'pull', roomCode: this.roomCode }).then(function (d) {
+      return self._norm(d);
+    });
+  };
+
+  WsAdapter.prototype.sendOp = function (op) {
+    // 实时模式：直接下发，不需要往返
+    if (this.isOpen()) {
+      this.ws.send(JSON.stringify({ t: 'op', roomCode: this.roomCode, data: op }));
+    }
+    return Promise.resolve();
+  };
+
+  // ---------------- 断线重连 ----------------
+  WsAdapter.prototype.reconnect = function () {
+    var self = this;
+    var code = this.roomCode;
+    var meta = this.opts.meta || {};
+    if (!code) return Promise.resolve(false);
+
+    // 关键：不要相信旧 socket 的 readyState。
+    // 断网时浏览器可能还报 readyState=1（假活），connect() 会直接短路，
+    // 于是"重连"实际上啥也没干，join 也发不出去。
+    var old = this.ws;
+    this.ws = null;
+    this.closedByMe = true;
+    if (old) {
+      old.onopen = old.onmessage = old.onclose = old.onerror = null;  // 摘掉回调，防它回头改写状态
+      try { old.close(); } catch (e) {}
+    }
+    this._queue = [];
+    this._pending = {};
+    this.closedByMe = false;
+    this.everOpened = false;
+
+    return this.connect().then(function () {
+      // asHost：房主重连时告诉服务端"房间没了就重建"（服务重启会丢房间）
+      return self._send({ t: 'join', roomCode: code, meta: meta, asHost: self.seat === 0 }, 8000);
+    }).then(function (d) {
+      self.seat = d && typeof d.seat === 'number' ? d.seat : self.seat;
+      self._status('online');
+      return true;
+    }).catch(function (e) {
+      self.lastError = (e && e.message) || '网络异常';
+      return false;
+    });
+  };
+
+  WsAdapter.prototype.leave = function () {
+    this.closedByMe = true;
+    try { this.ws && this.ws.close(); } catch (e) {}
+    this.ws = null;
+    this.roomCode = null;
+    return Promise.resolve();
+  };
+
+  module.exports = WsAdapter;
+})(typeof globalThis !== 'undefined' ? globalThis : this);
+  });
+
+  __def('/shared/net/cloud.js', function (require, module, exports) {
+/**
+ * 网络适配器 · 小程序端（微信云开发）
+ *
+ * ⚠️ 这个文件严格对齐 cloudfunctions/room/index.js 的实际约定：
+ *    - 请求参数用 code（不是 roomCode）
+ *    - 返回 { ok, msg, roomCode, seat, view, state, ops }
+ *    - 座位是 seats[] 数组：[{idx, name, me, taken, ready, online}]
+ *
+ * 同时对外暴露 net/contract.js 要求的统一接口，内部做一次归一化，
+ * 这样业务层（shared/app/lobby.js）两端代码完全一致。
+ */
+(function (root) {
+  'use strict';
+
+  var Base = require('/shared/net/contract.js');
+
+  function CloudAdapter(opts) {
+    Base.call(this);
+    this.opts = opts || {};
+    this.fnName = this.opts.fnName || 'room';
+    this.myName = this.opts.name || '房主';
+    this._fails = 0;
+  }
+  CloudAdapter.prototype = Object.create(Base.prototype);
+  CloudAdapter.prototype.constructor = CloudAdapter;
+
+  // ---------------- 云函数调用 ----------------
+  CloudAdapter.prototype._call = function (action, data) {
+    var self = this;
+    if (typeof wx === 'undefined' || !wx.cloud || !wx.cloud.callFunction) {
+      return Promise.reject(new Error('云开发未初始化，请检查 app.js 里的 wx.cloud.init'));
+    }
+    return new Promise(function (resolve, reject) {
+      wx.cloud.callFunction({
+        name: self.fnName,
+        data: Object.assign({ action: action }, data || {}),
+        success: function (res) {
+          var r = res.result || {};
+          if (r.ok === false) {
+            self.lastError = r.msg || '服务异常';
+            reject(new Error(self.lastError));
+            return;
+          }
+          self.lastError = '';
+          resolve(r);
+        },
+        fail: function (err) {
+          var msg = (err && err.errMsg) || '云函数调用失败';
+          if (msg.indexOf('timeout') >= 0 || msg.indexOf('TIME_LIMIT') >= 0) msg = '网络超时，请检查网络';
+          else if (msg.indexOf('env') >= 0) msg = '云开发环境未配置';
+          else if (msg.indexOf('FunctionName') >= 0) msg = '云函数 room 未部署';
+          self.lastError = msg;
+          reject(new Error(msg));
+        }
+      });
+    });
+  };
+
+  // ---------------- 视图归一化 ----------------
+  // 把云函数的 view（seats 数组）转成 contract 约定的 {ready:{0,1}, online:{0,1}}
+  CloudAdapter.prototype._norm = function (r) {
+    if (!r) return null;
+    var v = r.view || {};
+    var seats = v.seats || [];
+    var ready = { 0: false, 1: false };
+    var online = { 0: false, 1: false };
+    var players = [{ name: '', avatar: '', score: 0 }, { name: '', avatar: '', score: 0 }];
+
+    for (var i = 0; i < 2; i++) {
+      var s = seats[i];
+      if (!s) continue;
+      ready[i] = !!s.ready;
+      online[i] = !!s.online;
+      players[i] = { name: s.name || '', avatar: '', score: 0, taken: !!s.taken, me: !!s.me };
+    }
+
+    return {
+      roomCode: v.code || this.roomCode,
+      players: players,
+      ready: ready,
+      online: online,
+      isHost: !!v.isHost,
+      // 对局状态：云函数顶层给 state，view 里给 live/seed，这里合并
+      state: r.state
+        ? { live: !!r.state.live, seed: r.state.seed, snap: r.state.snap }
+        : { live: !!v.live, seed: v.seed, snap: null },
+      ops: r.ops || []
+    };
+  };
+
+  // ---------------- 连接 ----------------
+  // 云开发没有长连接，"连接"=云函数可用
+  CloudAdapter.prototype.connect = function () { return Promise.resolve(); };
+  CloudAdapter.prototype.isOpen = function () {
+    return typeof wx !== 'undefined' && !!wx.cloud && !!wx.cloud.callFunction;
+  };
+
+  // ---------------- 房间 ----------------
+  CloudAdapter.prototype.createRoom = function (meta) {
+    var self = this;
+    var name = (meta && meta.name) || this.myName;
+    return this._call('create', { name: name }).then(function (r) {
+      self.roomCode = r.roomCode;
+      self.seat = typeof r.seat === 'number' ? r.seat : 0;
+      self._status('online');
+      return r.roomCode;
+    });
+  };
+
+  CloudAdapter.prototype.joinRoom = function (code, meta) {
+    var self = this;
+    var name = (meta && meta.name) || '好友';
+    this.myName = name;
+    return this._call('join', { code: String(code), name: name }).then(function (r) {
+      self.roomCode = r.roomCode || code;
+      self.seat = typeof r.seat === 'number' ? r.seat : 1;
+      self._status('online');
+      return { roomCode: self.roomCode, seat: self.seat, view: self._norm(r) };
+    });
+  };
+
+  CloudAdapter.prototype.setReady = function (ready) {
+    return this._call('ready', { code: this.roomCode, ready: !!ready }).then(function () {
+      return true;
+    });
+  };
+
+  CloudAdapter.prototype.start = function (seed) {
+    return this._call('start', { code: this.roomCode, seed: seed }).then(function () { return true; });
+  };
+
+  CloudAdapter.prototype.pushState = function (snap, ready) {
+    // 云函数 state 接口收的是 {live, seed, snap}
+    var live = !!(snap && snap.live !== false);
+    return this._call('state', {
+      code: this.roomCode,
+      live: live,
+      seed: snap && snap.seed,
+      snap: snap && snap.snap
+    }).catch(function () {});
+  };
+
+  // 拉快照 + 消费房主的 ops
+  CloudAdapter.prototype.pullState = function () {
+    var self = this;
+    return this._call('pull', { code: this.roomCode }).then(function (r) {
+      self._fails = 0;
+      var v = self._norm(r);
+      // 只有房主会收到 ops，取到就派发
+      if (v.ops && v.ops.length) {
+        v.ops.forEach(function (op) { self._emitOp(op); });
+      }
+      return v;
+    }).catch(function (e) {
+      self._fails++;
+      if (self._fails === 3) self._status('offline');
+      throw e;
+    });
+  };
+
+  CloudAdapter.prototype.sendOp = function (op) {
+    return this._call('op', { code: this.roomCode, op: op }).catch(function () {});
+  };
+
+  // ---------------- 断线重连 ----------------
+  // 云开发没有连接可重连，等价于「重新 join 一次把状态接回来」
+  CloudAdapter.prototype.reconnect = function () {
+    var self = this;
+    if (!this.roomCode) return Promise.resolve(false);
+    return this._call('join', { code: this.roomCode, name: this.myName })
+      .then(function (r) {
+        self.seat = typeof r.seat === 'number' ? r.seat : self.seat;
+        self._fails = 0;
+        self._status('online');
+        return true;
+      })
+      .catch(function (e) {
+        self.lastError = (e && e.message) || '重连失败';
+        return false;
+      });
+  };
+
+  CloudAdapter.prototype.leave = function () {
+    var self = this;
+    var code = this.roomCode;
+    this.roomCode = null;
+    if (!code) return Promise.resolve();
+    return this._call('leave', { code: code }).catch(function () {});
+  };
+
+  module.exports = CloudAdapter;
+})(typeof globalThis !== 'undefined' ? globalThis : this);
+  });
+
+  __def('/shared/app/lobby.js', function (require, module, exports) {
+/**
+ * 哥俩好 · 大厅逻辑（两端共用）
+ *
+ * 从 web/app.js 里抽出来的平台无关部分：房间状态机、准备切换、
+ * 开局判定、断线重连、轮询。UI 只负责把这里的状态画出来。
+ *
+ * 用法：
+ *   var Lobby = require('/shared/shared/app/lobby.js');
+ *   var lobby = new Lobby({ net: adapter, ui: {...}, onBegin });
+ */
+(function (root) {
+  'use strict';
+
+  var env = require('/shared/platform/env.js');
+
+  /**
+   * @param {Object} opts
+   *   opts.net       网络适配器（满足 net/contract.js）
+   *   opts.mode      'host' | 'guest' | 'solo'
+   *   opts.ui        UI 回调：{ renderSeats, onStatus, onNetbar, onToast, onBegin, onBail }
+   *   opts.pollMs    轮询间隔，默认 1000
+   */
+  function Lobby(opts) {
+    this.net = opts.net;
+    this.mode = opts.mode || 'solo';
+    this.ui = opts.ui || {};
+    this.pollMs = opts.pollMs || 1000;
+
+    this.phase = 'lobby';       // lobby | playing | home
+    this.readyMe = false;
+    this.readyPeer = false;
+    this.onlinePeer = false;
+    this.view = null;
+
+    this.started = false;
+    this.bothReadyFired = false;
+
+    this._timer = null;
+    this._polling = false;
+    this._fails = 0;
+
+    this._bindNet();
+  }
+
+  // ---------------- 房间座位号（关键：别和游戏内猴子号混用） ----------------
+  // 房间座位号：房主 0、好友 1  ← ready / online 数组用的就是它
+  Lobby.prototype.myRoomSeat = function () {
+    return this.mode === 'host' ? 0 : 1;
+  };
+  // 游戏内猴子号：房主 1（前排）、好友 0（后排）
+  Lobby.prototype.myGameSeat = function () {
+    return this.mode === 'host' ? 1 : 0;
+  };
+  Lobby.prototype.otherRoomSeat = function () {
+    return 1 - this.myRoomSeat();
+  };
+
+  // ---------------- 状态解包 ----------------
+  Lobby.prototype.applyView = function (v) {
+    if (!v) return;
+    this.view = v;
+    var other = this.otherRoomSeat();
+    // online 可能是数组（WS 服务端）也可能是对象（云函数归一化后），两种都吃
+    this.onlinePeer = this.net && this.net.isOnline
+      ? this.net.isOnline(v, other)
+      : !!(v.online && v.online[other]);
+    this.readyPeer = this.net && this.net.isReady
+      ? this.net.isReady(v, other)
+      : !!(v.ready && v.ready[other]);
+
+    if (this.ui.renderSeats) {
+      this.ui.renderSeats(this._snapshot());
+    }
+  };
+
+  // 给 UI 的统一数据包（renderSeats 的入参，也是页面 setData 的来源）
+  Lobby.prototype._snapshot = function () {
+    return {
+      mode: this.mode,
+      readyMe: this.readyMe,
+      readyPeer: this.readyPeer,
+      onlinePeer: this.onlinePeer,
+      myRoomSeat: this.myRoomSeat(),
+      view: this.view
+    };
+  };
+
+  // 双方都 ready 才算能开局 —— 只看对方是常见错误，房主自己没准备也会被开了
+  Lobby.prototype.bothReady = function (v) {
+    v = v || this.view;
+    if (!v || !v.ready) return false;
+    return !!(v.ready[0] && v.ready[1]);
+  };
+
+  // 客人端进入判断：房主宣布 live 才算
+  Lobby.prototype.isLive = function (v) {
+    v = v || this.view;
+    return !!(v && v.state && v.state.live);
+  };
+
+  // ---------------- 网络事件 ----------------
+  Lobby.prototype._bindNet = function () {
+    var self = this;
+    if (!this.net || !this.net.onStatus) return;
+
+    this.net.onStatus(function (s) {
+      if (s === 'online') {
+        if (self.ui.onNetbar) self.ui.onNetbar('', null);
+      }
+      if (s === 'offline') {
+        if (self.ui.onNetbar) self.ui.onNetbar('连不上服务器，正在重试…', 'warn');
+      }
+      if (s === 'lost') {
+        if (self.ui.onNetbar) self.ui.onNetbar('网络断了，正在重连…', 'warn');
+        self.tryReconnect();
+      }
+      if (s === 'peer-left') {
+        self.onlinePeer = false;
+        if (self.ui.renderSeats) self.ui.renderSeats(self._snapshot());
+        if (self.ui.onToast) {
+          if (self.phase === 'lobby') self.ui.onToast('好友离开 / 掉线了，等他回来', 2200);
+          else if (self.phase === 'playing') self.ui.onToast('好友掉线了，3 秒后自动接管他的猴子', 2600);
+        }
+      }
+      if (s === 'peer-join') {
+        self.onlinePeer = true;
+        if (self.ui.onNetbar) self.ui.onNetbar('好友已连接', 'ok', 1600);
+        if (self.ui.renderSeats) self.ui.renderSeats(self._snapshot());
+      }
+      if (self.ui.onStatus) self.ui.onStatus(s);
+    });
+  };
+
+  // ---------------- 轮询 ----------------
+  Lobby.prototype.startPoll = function () {
+    var self = this;
+    if (this._timer) clearInterval(this._timer);
+    this._polling = false;
+    this._fails = 0;
+
+    this._timer = setInterval(function () {
+      if (self.phase !== 'lobby') return;
+      if (self._polling) return;       // 上一个还没回来，跳过，避免请求雪崩
+      if (!self.net) return;
+
+      self._polling = true;
+      self.net.pullState().then(function (v) {
+        self._polling = false;
+        self._fails = 0;
+        if (!v) return;
+
+        // 我自己的 ready 以服务端为准。
+        // toggleReady 只发了请求没回读，如果中间请求丢了/被覆盖，
+        // 本地会显示"已准备"而服务端是 false，双方就永远卡在房间里等开局。
+        if (self.net.isReady) self.readyMe = self.net.isReady(v, self.myRoomSeat());
+
+        self.applyView(v);
+
+        // 客人端：房主宣布 live 就进游戏
+        if (v.state && v.state.live && !self.started && self.mode === 'guest') {
+          self.started = true;
+          self.stopPoll();
+          self.phase = 'playing';
+          if (self.ui.onBegin) self.ui.onBegin(v.state.seed);
+          return;
+        }
+
+        // 房主：双方都准备好了就自动开局
+        if (self.mode === 'host' && !self.started && self.bothReady(v)) {
+          self.startGameAsHost();
+        }
+      }).catch(function () {
+        self._polling = false;
+        self._fails++;
+
+        // 一直拉不到就必须让用户看见，绝不能静默卡在房间里
+        if (self._fails >= 3 && self.ui.onNetbar) {
+          var why = (self.net && self.net.lastError) || '';
+          if (why.indexOf('房间不存在') >= 0) {
+            self.ui.onNetbar('房间已失效（服务器重启过）', 'warn');
+          } else {
+            self.ui.onNetbar('网络不稳定，正在重试…（第 ' + self._fails + ' 次）', 'warn');
+          }
+        }
+
+        if (self._fails === 4 && self.net && self.net.reconnect) self.tryReconnect();
+
+        // 好友端连续拉不到（多半服务重启、房间没了）—— 别让人干等
+        if (self.mode === 'guest' && self._fails === 12) self.bailOut();
+      });
+    }, this.pollMs);
+  };
+
+  // 立刻拉一次（进页面、点完准备时别干等 1 秒）
+  Lobby.prototype.pullNow = function () {
+    var self = this;
+    if (!this.net || this.phase !== 'lobby') return Promise.resolve(null);
+    return this.net.pullState().then(function (v) {
+      self._fails = 0;
+      if (!v) return null;
+      if (self.net.isReady) self.readyMe = self.net.isReady(v, self.myRoomSeat());
+      self.applyView(v);
+      if (v.state && v.state.live && !self.started && self.mode === 'guest') {
+        self.started = true;
+        self.stopPoll();
+        self.phase = 'playing';
+        if (self.ui.onBegin) self.ui.onBegin(v.state.seed);
+      } else if (self.mode === 'host' && !self.started && self.bothReady(v)) {
+        self.startGameAsHost();
+      }
+      return v;
+    }).catch(function () { return null; });
+  };
+
+  Lobby.prototype.stopPoll = function () {
+    if (this._timer) { clearInterval(this._timer); this._timer = null; }
+    this._polling = false;
+  };
+
+  // ---------------- 准备 / 取消 ----------------
+  Lobby.prototype.toggleReady = function () {
+    var self = this;
+    if (!this.net) return Promise.reject(new Error('未连接'));
+    var next = !this.readyMe;
+
+    return this.net.setReady(next).then(function () {
+      self.readyMe = next;
+      if (self.ui.renderSeats) self.ui.renderSeats(self._snapshot());
+      if (next) {
+        if (self.mode === 'host') {
+          // 房主自己也准备好了，立刻检查对方
+          self.checkStart();
+        } else if (self.ui.onToast) {
+          self.ui.onToast('已准备，等房主开局…', 1800);
+        }
+      } else if (self.ui.onToast) {
+        self.ui.onToast('已取消准备', 1400);
+      }
+      return next;
+    }).catch(function (e) {
+      // 失败不改变 UI 状态，避免显示与真实不一致
+      if (self.ui.onToast) self.ui.onToast('操作失败，请检查网络后重试', 2000);
+      throw e;
+    });
+  };
+
+  // 房主检查能否开局（带重试，网络抖动不静默失败）
+  Lobby.prototype.checkStart = function () {
+    var self = this;
+    if (this.mode !== 'host' || this.phase !== 'lobby') return;
+    if (this._checking) return;
+    this._checking = true;
+
+    this._retry(function () { return self.net.pullState(); }, 3, 700)
+      .then(function (v) {
+        self._checking = false;
+        self.applyView(v);
+        if (self.bothReady(v)) self.startGameAsHost();
+        else if (self.ui.onToast) self.ui.onToast('等好友准备好就能开始', 1600);
+      })
+      .catch(function () {
+        self._checking = false;
+        if (self.ui.onNetbar) self.ui.onNetbar('网络不稳定，正在重试开局…', 'warn');
+        setTimeout(function () {
+          if (self.phase === 'lobby') self.checkStart();
+        }, 1500);
+      });
+  };
+
+  Lobby.prototype.startGameAsHost = function () {
+    if (this.started) return;
+    this.started = true;
+    this.stopPoll();
+    this.phase = 'playing';
+    var seed = Math.floor(Math.random() * 1e9);
+    var self = this;
+
+    // 先告诉服务端"开局了"，客人端靠 live 字段感知
+    var p = this.net.start ? this.net.start(seed) : Promise.resolve();
+    p.catch(function () {}).then(function () {
+      if (self.ui.onBegin) self.ui.onBegin(seed);
+    });
+  };
+
+  // ---------------- 断线重连 ----------------
+  Lobby.prototype.tryReconnect = function () {
+    var self = this;
+    if (this._reconnecting || !this.net || !this.net.reconnect) return;
+    this._reconnecting = true;
+    var tries = 0;
+
+    (function attempt() {
+      tries++;
+      if (self.ui.onNetbar) {
+        self.ui.onNetbar('网络断了，正在重连…（第 ' + tries + '/5 次）', 'warn');
+      }
+      self.net.reconnect().then(function (ok) {
+        if (ok) {
+          self._reconnecting = false;
+          if (self.ui.onNetbar) self.ui.onNetbar('已重新连接', 'ok', 2000);
+          if (self.phase === 'lobby') self.startPoll();
+          return;
+        }
+        if (tries >= 5) {
+          self._reconnecting = false;
+          var why = (self.net.lastError || '');
+          if (why.indexOf('房间不存在') >= 0) self.bailOut();
+          else if (self.ui.onNetbar) {
+            self.ui.onNetbar('连不上服务器，请检查网络后重开房间', 'warn');
+            if (self.ui.onToast) self.ui.onToast('网络一直连不上，只能先重开房间了', 3000);
+          }
+          return;
+        }
+        setTimeout(attempt, 1200 * tries);
+      });
+    })();
+  };
+
+  // ---------------- 退出 ----------------
+  Lobby.prototype.bailOut = function () {
+    if (this.phase === 'home') return;
+    this.stopPoll();
+    this.phase = 'home';
+    if (this.ui.onNetbar) this.ui.onNetbar('房间已失效，请让房主重新建房', 'warn');
+    if (this.ui.onToast) {
+      this.ui.onToast('和房间断开太久了，接不回来了。让房主重新建个房间，再把房号发你', 4500);
+    }
+    if (this.net && this.net.leave) this.net.leave().catch(function () {});
+    if (this.ui.onBail) this.ui.onBail();
+  };
+
+  Lobby.prototype.leave = function () {
+    this.stopPoll();
+    this.phase = 'home';
+    if (this.net && this.net.leave) return this.net.leave().catch(function () {});
+    return Promise.resolve();
+  };
+
+  // ---------------- 工具：重试包装 ----------------
+  Lobby.prototype._retry = function (fn, times, gap) {
+    times = times || 3;
+    gap = gap || 800;
+    return new Promise(function (resolve, reject) {
+      var left = times;
+      (function attempt() {
+        fn().then(resolve).catch(function (err) {
+          left--;
+          if (left <= 0) { reject(err); return; }
+          setTimeout(attempt, gap);
+        });
+      })();
+    });
+  };
+
+  module.exports = Lobby;
+})(typeof globalThis !== 'undefined' ? globalThis : this);
+  });
+
+  __def('/shared/app/session.js', function (require, module, exports) {
+/**
+ * 哥俩好 · 游戏会话（两端共用）
+ *
+ * 把 web/app.js 里「跟玩法有关但与界面无关」的部分抽出来：
+ * 主循环、输入、HUD 数据、事件音效、房主/客人同步。
+ * UI 只负责把 hud() 返回的数据画到自己的组件上。
+ */
+(function (root) {
+  'use strict';
+
+  var Core = require('/shared/core/core.js');
+  var Renderer = require('/shared/core/render.js');
+
+  var CFG = Core.CFG;
+
+  /**
+   * @param {Object} opts
+   *   opts.ctx         CanvasRenderingContext2D
+   *   opts.canvasInfo  createCanvas 的返回值（含 raf/cancelRaf 就用它）
+   *   opts.sfx         音效器（可为 null）
+   *   opts.net         网络适配器（联机时传，单人不传）
+   *   opts.mode        'solo' | 'host' | 'guest'
+   *   opts.seed        number
+   *   opts.ui          { onHud, onOver, onToast }
+   */
+  function Session(opts) {
+    this.ctx = opts.ctx;
+    this.canvasInfo = opts.canvasInfo || {};
+    this.sfx = opts.sfx || null;
+    this.net = opts.net || null;
+    this.mode = opts.mode || 'solo';
+    this.seed = opts.seed || Math.floor(Math.random() * 1e9);
+    this.ui = opts.ui || {};
+
+    this.renderer = new Renderer(this.ctx);
+    this.game = new Core.Game(this.seed);
+    // 所有事件（含 gameover）都走 onEvent；core 没有 onOver 回调，别挂
+    this.game.onEvent = this._onEvent.bind(this);
+
+    this.pressing = false;
+    this.running = false;
+    this.raf = null;
+    this._lastT = 0;
+    this._acc = 0;
+    this._hudAcc = 0;
+    this._pushAcc = 0;
+    this._syncTimer = null;
+    this._destroyed = false;
+    this._opSeq = 0;
+  }
+
+  // ---------------- 生命周期 ----------------
+  Session.prototype.start = function () {
+    if (this.running) return;
+    this.running = true;
+    this.game.start();
+
+    var self = this;
+    // 小程序用 canvas.requestAnimationFrame，网页用全局
+    var raf = this.canvasInfo.raf
+      ? function (cb) { return self.canvasInfo.raf(cb); }
+      : function (cb) { return (root.requestAnimationFrame || setTimeout)(cb); };
+
+    function loop(now) {
+      if (self._destroyed || !self.running) return;
+      var t = typeof now === 'number' ? now : Date.now();
+      var dt = self._lastT ? Math.min((t - self._lastT) / 1000, 0.05) : 0.016;
+      self._lastT = t;
+      self._tick(dt);
+      self.raf = raf(loop);
+    }
+    this.raf = raf(loop);
+
+    // 联机：客人端定期拉房主快照
+    if (this.mode === 'guest' && this.net) this._startGuestSync();
+  };
+
+  Session.prototype._tick = function (dt) {
+    var g = this.game;
+
+    if (this.mode === 'guest') {
+      // 客人端：位置由快照驱动，本地只跑视觉
+      g.tickVisual(dt);
+    } else {
+      g.update(dt);
+      // 房主：定期把状态推给对方
+      if (this.net && this.mode === 'host') {
+        this._pushAcc += dt;
+        if (this._pushAcc >= 0.12) {
+          this._pushAcc = 0;
+          this._pushHostState();
+        }
+      }
+    }
+
+    this.renderer.draw(g, dt);
+
+    // HUD 每 100ms 同步一次，别每帧都写，省性能
+    this._hudAcc += dt;
+    if (this._hudAcc >= 0.1) {
+      this._hudAcc = 0;
+      if (this.ui.onHud) this.ui.onHud(this.hud());
+    }
+  };
+
+  Session.prototype.stop = function () {
+    this.running = false;
+    this._stopGuestSync();
+    if (this.raf && this.canvasInfo.cancelRaf) {
+      try { this.canvasInfo.cancelRaf(this.raf); } catch (e) {}
+    }
+    this.raf = null;
+  };
+
+  Session.prototype.destroy = function () {
+    this._destroyed = true;
+    this.stop();
+    // Game 内核没有 stop()，只有 reset() —— 直接调 stop 会抛 TypeError
+    if (this.game && typeof this.game.reset === 'function') {
+      try { this.game.reset(); } catch (e) {}
+    }
+    if (this.game) this.game.onEvent = null;
+    if (this.net && this.net.onOp) {
+      try { this.net.onOp(null); } catch (e) {}
+    }
+  };
+
+  // ---------------- 输入 ----------------
+  Session.prototype.pressStart = function () {
+    if (this.mode === 'guest') return;      // 客人端不操作
+    if (this.pressing) return;
+    if (!this.canPress()) return;
+    this.pressing = true;
+    this.game.pressStart();
+    this._sfx('charge');
+    this._vibrate('light');
+  };
+
+  Session.prototype.pressEnd = function () {
+    if (this.mode === 'guest') return;
+    if (!this.pressing) return;
+    this.pressing = false;
+    this.game.pressEnd();
+  };
+
+  Session.prototype.pressCancel = function () {
+    if (this.pressing) {
+      this.pressing = false;
+      this.game.pressEnd();
+    }
+  };
+
+  Session.prototype.canPress = function () {
+    var g = this.game;
+    if (!g || g.over) return false;
+    if (typeof g.canAct === 'function') return g.canAct();
+    return true;
+  };
+
+  // ---------------- HUD 数据 ----------------
+  Session.prototype.hud = function () {
+    var g = this.game;
+    var name = '你';
+    if (this.mode !== 'solo') {
+      var activeSeat = g.active;
+      var mySeat = this.mode === 'host' ? 1 : 0;
+      name = activeSeat === mySeat ? '你' : '好友';
+    }
+    return {
+      dist: Math.floor(g.distance || 0),
+      score: Math.floor(g.score || 0),
+      coins: g.coins || 0,
+      rescue: g.rescues || 0,
+      combo: g.combo || 0,
+      falls: g.falls || 0,
+      turnName: name,
+      over: g.state === 'over'
+    };
+  };
+
+  // ---------------- 事件 ----------------
+  // core 全部经 onEvent(type, data) 抛出；gameover 在这里转成 ui.onOver
+  Session.prototype._onEvent = function (type, d) {
+    d = d || {};
+    // gameover 的音效键叫 'over'，其余事件名与音效键一致
+    this._sfx(type === 'gameover' ? 'over' : type);
+    if (type === 'coin' || type === 'rescue' || type === 'hit' ||
+        type === 'perfect' || type === 'gold' || type === 'checkpoint') {
+      this._vibrate('light');
+    }
+    if (type === 'gameover') {
+      this._vibrate('heavy');
+      this._onOver(d);
+      return;
+    }
+    if (type === 'checkpoint' && this.ui.onToast) {
+      this.ui.onToast('到达存档点！掉下去也能从这儿接着来', 1500);
+    }
+    if (type === 'gold' && this.ui.onToast) {
+      this.ui.onToast('金香蕉 +50！', 1200);
+    }
+  };
+
+  Session.prototype._onOver = function (d) {
+    this.stop();
+    if (!this.ui.onOver) return;
+    var rescues = (d && d.rescues) || 0;
+    this.ui.onOver({
+      title: d && d.title ? d.title : '双双落水',
+      reason: d && d.reason ? d.reason : '',
+      score: Math.floor((d && d.score) || 0),
+      dist: Math.floor((d && d.distance) || 0),
+      coins: (d && d.coins) || 0,
+      rescue: rescues,
+      falls: (d && d.falls) || 0,
+      bestCombo: (d && d.bestCombo) || 0,
+      perfects: (d && d.perfects) || 0,
+      golds: (d && d.golds) || 0
+    });
+  };
+
+  // ---------------- 联机同步 ----------------
+  Session.prototype._pushHostState = function () {
+    if (!this.net || !this.game) return;
+    if (typeof this.game.hasBegun === 'function' && !this.game.hasBegun()) return;
+    this.net.pushState({
+      live: true,
+      seed: this.game.seed,
+      s: 2,
+      snap: this.game.snapshot()
+    }, true).catch(function () {});
+  };
+
+  Session.prototype._startGuestSync = function () {
+    var self = this;
+    if (this._syncTimer) clearInterval(this._syncTimer);
+    this._syncTimer = setInterval(function () {
+      if (self._destroyed || self.mode !== 'guest' || !self.net) return;
+      self.net.pullState().then(function (v) {
+        if (!v || !v.state || !v.state.snap) return;
+        self.game.applySnapshot(v.state.snap);
+      }).catch(function () {
+        // 同步失败就多等一轮，别停
+      });
+    }, 200);
+  };
+
+  Session.prototype._stopGuestSync = function () {
+    if (this._syncTimer) { clearInterval(this._syncTimer); this._syncTimer = null; }
+  };
+
+  // ---------------- 工具 ----------------
+  Session.prototype._sfx = function (name) {
+    if (this.sfx) this.sfx.play(name);
+  };
+
+  Session.prototype._vibrate = function (type) {
+    var env = require('/shared/platform/env.js');
+    env.vibrate(type);
+  };
+
+  // 单人成绩存档
+  Session.prototype.saveBest = function () {
+    var env = require('/shared/platform/env.js');
+    var best = env.getStorage('best', 0) || 0;
+    if (this.game.score > best) {
+      env.setStorage('best', Math.floor(this.game.score));
+      return Math.floor(this.game.score);
+    }
+    return best;
+  };
+
+  module.exports = Session;
+})(typeof globalThis !== 'undefined' ? globalThis : this);
+  });
+
+  __def('/web/app.js', function (require, module, exports) {
+/**
+ * 哥俩好 · 网页端入口
+ *
+ * 启动方式：先让 loader 把 shared/ 下的依赖全部拉下来，
+ * 依赖就绪后在回调里再同步 require —— 这样业务代码写法和小程序一模一样。
+ */
+(function () {
+  'use strict';
+
+  // 需要预加载的共用模块（顺序无所谓，loader 会按依赖拓扑排序）
+  var DEPS = [
+    '/shared/core/core.js',
+    '/shared/core/render.js',
+    '/shared/platform/env.js',
+    '/shared/platform/routes.js',
+    '/shared/platform/router.js',
+    '/shared/platform/sfx-base.js',
+    '/shared/platform/sfx.web.js',
+    '/shared/platform/sfx.mp.js',
+    '/shared/platform/canvas.web.js',
+    '/shared/platform/canvas.mp.js',
+    '/shared/platform/index.js',
+    '/shared/net/contract.js',
+    '/shared/net/ws.js',
+    '/shared/net/cloud.js',
+    '/shared/app/lobby.js',
+    '/shared/app/session.js'
+  ];
+
+  require.boot(DEPS, function () {
+    boot();
+  });
+
+  function boot() {
+
+  // ---- 统一从 shared/ 取（两端唯一真源）----
+  var Core = require('/shared/core/core.js');
+  var Renderer = require('/shared/core/render.js');
+  var Sfx = require('/shared/platform/sfx.web.js');
+  var NetWs = require('/shared/net/ws.js');
+  var env = require('/shared/platform/env.js');
+  var Router = require('/shared/platform/router.js');
+
+  var CFG = Core.CFG;
+  // 兼容老代码里的 Net.WsAdapter 写法
+  var Net = { WsAdapter: NetWs, CloudAdapter: require('/shared/net/cloud.js') };
+  var SfxCtor = Sfx;
+
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+  var sfx = new SfxCtor();
+  var renderer = new Renderer(ctx);
+  var game = null;
+  var scale = 1;
+  var dpr = Math.min(window.devicePixelRatio || 1, 2);
+  var lastT = 0;
+
+  var state = {
+    mode: 'solo',      // solo | host | guest
+    seat: 0,           // 联机时我坐哪只猴子（0 / 1）
+    phase: 'home',     // home | lobby | playing | over
+    readyMe: false,
+    readyPeer: false,
+    onlinePeer: false,
+    seed: 1
+  };
+
+  var adapter = null;
+  var lobbyTimer = null;
+  var syncTimer = null;
+  var pushAcc = 0;
+  var started = false;
+  var peerStarted = false;
+
+  // 调试出口：浏览器控制台里可直接看 __debug.state() / __debug.pull() 排查联机问题
+  window.__debug = {
+    state: function () { return JSON.parse(JSON.stringify(state)); },
+    pull: function () { return adapter ? adapter.pullState() : Promise.resolve(null); },
+    adapter: function () { return adapter; }
+  };
+
+  var $ = function (id) { return document.getElementById(id); };
+  var SCREENS = ['scrHome', 'scrRoom', 'scrOver', 'scrHow'];
+
+  function show(id) {
+    SCREENS.forEach(function (s) {
+      var el = $(s);
+      if (s === id) { el.style.display = 'flex'; el.classList.add('show'); }
+      else { el.style.display = 'none'; el.classList.remove('show'); }
+    });
+    var hud = $('hud');
+    if (id === null) { hud.classList.add('show'); hud.style.opacity = '1'; }
+    else { hud.classList.remove('show'); hud.style.opacity = '0'; }
+  }
+  function hideScreens() {
+    show(null);
+    $('btnQuit').classList.add('show');   // 进游戏才显示退出按钮
+  }
+
+  var toastTimer = null;
+  function toast(msg, ms) {
+    var el = $('toast');
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { el.classList.remove('show'); }, ms || 1500);
+  }
+
+  // ---------------- 移动端手势防护 ----------------
+  // 目标：双击不放大、双指不缩放、长按不弹菜单、下滑不刷新、左右滑不回退。
+  (function guardGestures() {
+    // 双指/多指：直接拦掉（Safari 的双指缩放、Chrome 的 pinch-zoom）
+    document.addEventListener('gesturestart', function (e) { e.preventDefault(); }, { passive: false });
+    document.addEventListener('gesturechange', function (e) { e.preventDefault(); }, { passive: false });
+    document.addEventListener('gestureend', function (e) { e.preventDefault(); }, { passive: false });
+
+    // touchmove：多指一律拦；单指只在"可滚区域"放行，其余拦掉（防橡皮筋/下拉刷新）
+    document.addEventListener('touchmove', function (e) {
+      if (e.touches && e.touches.length > 1) { e.preventDefault(); return; }
+      var t = e.target;
+      var scrollable = t && t.closest && t.closest('.scrollable');
+      if (!scrollable && e.cancelable) e.preventDefault();
+    }, { passive: false });
+
+    // 双击缩放：记录上一次点击时间，300ms 内的第二次 taps 拦掉
+    var lastTap = 0;
+    document.addEventListener('touchend', function (e) {
+      var now = Date.now();
+      if (now - lastTap < 300) { e.preventDefault(); }
+      lastTap = now;
+    }, { passive: false });
+
+    // 长按弹菜单（图片/链接被长按会弹"存储/打开"）
+    document.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+
+    // 触屏设备上补一条：某些安卓浏览器只认 meta 更新时才生效，这里再压一次
+    function lockZoom() {
+      var vp = document.querySelector('meta[name=viewport]');
+      if (!vp) return;
+      vp.setAttribute('content',
+        'width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover');
+    }
+    lockZoom();
+    window.addEventListener('orientationchange', function () {
+      lockZoom();
+      setTimeout(fit, 250);   // 转屏后重新量尺寸
+    });
+  })();
+
+  // 横屏提示：只有手机横过来才提示（平板/桌面不管）
+  function checkOrientation() {
+    var tip = document.getElementById('rotateTip');
+    if (!tip) return;
+    var isPhone = Math.min(window.innerWidth, window.innerHeight) < 600;
+    var landscape = window.innerWidth > window.innerHeight;
+    tip.classList.toggle('show', isPhone && landscape);
+  }
+  window.addEventListener('resize', checkOrientation);
+  window.addEventListener('orientationchange', function () { setTimeout(checkOrientation, 200); });
+  checkOrientation();
+
+  // ---------------- 画布 ----------------
+  function fit() {
+    var rect = cv.parentElement.getBoundingClientRect();
+    cv.width = Math.round(rect.width * dpr);
+    cv.height = Math.round(rect.height * dpr);
+    scale = Math.min(rect.width / CFG.W, rect.height / CFG.H);
+    if (renderer.resize) renderer.resize(scale);
+  }
+  window.addEventListener('resize', fit);
+
+  // ---------------- 游戏生命周期 ----------------
+  // 这里有【两套编号】，很容易混，写清楚：
+  //   房间座位号 roomSeat：房主 0、好友 1   —— 服务端 ready/online 数组用的就是它
+  //   游戏内猴子号 gameSeat：房主 1（前排）、好友 0（后排）—— 和渲染顺序/标签对应
+  function myRoomSeat() { return state.mode === 'host' ? 0 : 1; }
+  function mySeat() { return state.mode === 'host' ? 1 : 0; }
+
+  function newGame(seed) {
+    game = new Core.Game({ seed: seed || Math.floor(Math.random() * 1e9) });
+    game.onEvent = onGameEvent;
+    // reset() 会把 netMode/seat 清空，所以必须在这里重新绑定
+    if (state.mode === 'host') game.setNet('host', 1);
+    if (state.mode === 'guest') game.setNet('guest', 0);
+    state.seat = game.seat;
+    fit();
+  }
+
+  function onGameEvent(type, d) {
+    switch (type) {
+      case 'jump': sfx.play('jump'); break;
+      case 'land': sfx.play('land'); break;
+      case 'wet': sfx.play('wet'); toast('掉坑里了！换另一只跳过坑，把它钓上来', 1700); break;
+      case 'rescue': sfx.play('rescue'); toast('哥俩好！把伙伴钓上来了 +30', 1400); break;
+      case 'coin': sfx.play('coin'); break;
+      case 'hit': sfx.play('hit'); break;
+      case 'switch': sfx.play('switch'); break;
+      case 'perfect': sfx.play('perfect'); break;
+      case 'gold': sfx.play('gold'); toast('金香蕉 +50！', 1200); break;
+      case 'checkpoint': sfx.play('checkpoint'); toast('到达存档点！掉下去也能从这儿接着来', 1500); break;
+      case 'respawn': sfx.play('respawn'); break;
+      case 'gameover': onGameOver(d); break;
+    }
+    if (location.search.indexOf('dbg=1') >= 0) console.log('ev', type, JSON.stringify(d));
+  }
+
+  function onGameOver(d) {
+    sfx.play('over');
+    state.phase = 'over';
+    var best = Number(localStorage.getItem('glh_best') || 0);
+    if (d.score > best) { best = d.score; localStorage.setItem('glh_best', String(best)); }
+    $('ovScore').textContent = d.score;
+    $('ovDist').textContent = d.distance;
+    $('ovCoin').textContent = d.coins;
+    $('ovRescue').textContent = d.rescues;
+    $('ovPerfect').textContent = d.perfects || 0;
+    $('ovGold').textContent = d.golds || 0;
+    $('ovCombo').textContent = d.bestCombo || 0;
+    $('ovFalls').textContent = d.falls || 0;
+    $('ovBest').textContent = best;
+    $('overReason').textContent = overReasonText(d);
+    $('btnQuit').classList.remove('show');     // 结算页不需要退出按钮
+    setTimeout(function () { show('scrOver'); }, 600);
+  }
+
+  // 结算文案：双落水 vs 同一存档点连摔 3 次的卡关，说清楚区别
+  function overReasonText(d) {
+    if (d.reason === 'stuck') return '同一面旗子连掉 ' + (d.falls || 3) + ' 次，这关先饶过你们';
+    if (d.rescues >= 3) return '你俩互相拉上来 ' + d.rescues + ' 次，最后还是双双落水';
+    return '两只猴子一起掉进了水里';
+  }
+
+  // ---------------- 主循环 ----------------
+  function loop(now) {
+    requestAnimationFrame(loop);
+    var dt = lastT ? Math.min(0.05, (now - lastT) / 1000) : 0.016;
+    lastT = now;
+    if (!game) return;
+
+    if (state.mode !== 'guest') {
+      game.update(dt);
+      if (state.mode === 'host' && adapter) {
+        pushAcc += dt;
+        if (pushAcc > 0.1) { pushAcc = 0; pushHostState(); }
+      }
+    } else if (game.tickVisual) {
+      // 客人端不跑物理（位置由房主快照驱动），但要推进粒子和地形生成，画面才不会僵住
+      game.tickVisual(dt);
+    }
+
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    ctx.scale(dpr, dpr);
+    var w = cv.width / dpr, h = cv.height / dpr;
+    ctx.translate((w - CFG.W * scale) / 2, (h - CFG.H * scale) / 2);
+    ctx.scale(scale, scale);
+    renderer.draw(game, dt, { aiming: true, names: seatNames() });
+    ctx.restore();
+
+    updateHud();
+  }
+
+  // 联机时在猴子头上显示"谁在操控"
+  function seatNames() {
+    if (state.mode === 'solo') return null;
+    var mine = game ? game.seat : mySeat();
+    var names = ['好友', '好友'];
+    names[mine] = '我';
+    return names;
+  }
+
+  var lastCombo = -1;
+  function updateHud() {
+    $('hudDist').textContent = game.distance;
+    $('hudScore').textContent = game.score;
+    $('hudCoin').textContent = game.coins;
+    var turn;
+    if (state.mode === 'solo') turn = '你';
+    else turn = (game.active === game.seat) ? '你' : '好友';
+    $('hudTurn').textContent = turn;
+    // 连击 pill：>=2 才亮，数字变了补一个弹跳动
+    var combo = game.combo || 0;
+    $('comboPill').classList.toggle('show', combo >= 2);
+    if (combo !== lastCombo) {
+      lastCombo = combo;
+      $('hudCombo').textContent = 'x' + combo;
+      if (combo >= 2) {
+        var el = $('comboPill');
+        el.classList.remove('pop');
+        void el.offsetWidth;   // 强制重排，让动画能重放
+        el.classList.add('pop');
+      }
+    }
+    $('hudFalls').textContent = game.falls || 0;
+  }
+
+  // ---------------- 输入 ----------------
+  var pressing = false;
+  function canPress() {
+    if (!game) return false;
+    if (state.mode !== 'solo' && game.active !== game.seat) return false;
+    return game.state === 'playing' || game.state === 'ready';
+  }
+  function onDown(e) {
+    if (!game) return;
+    if (game.state === 'ready') { game.pressStart(); return; }
+    if (!canPress()) {
+      toast('这一只不归你管，等你的猴子起跳');
+      return;
+    }
+    pressing = true;
+    var seat = game.active;
+    game.pressStart();
+    if (state.mode !== 'solo') sendOp({ t: 'down', m: seat });
+  }
+  function onUp() {
+    if (!pressing || !game) return;
+    pressing = false;
+    game.pressEnd();
+    var op = game.lastOpOut;
+    if (state.mode !== 'solo' && op) sendOp({ t: 'up', m: op.m, p: op.p });
+  }
+  function onCancel() { if (pressing && game) { pressing = false; game.pressEnd(); } }
+
+  cv.addEventListener('touchstart', function (e) { e.preventDefault(); onDown(e); }, { passive: false });
+  cv.addEventListener('touchend', function (e) { e.preventDefault(); onUp(); }, { passive: false });
+  cv.addEventListener('touchcancel', onCancel);
+  cv.addEventListener('mousedown', function (e) { e.preventDefault(); onDown(e); });
+  window.addEventListener('mouseup', onUp);
+
+  // ---------------- 网络状态提示 ----------------
+  var netTimer = null;
+  function netbar(msg, kind, ms) {
+    var el = $('netbar');
+    if (!el) return;
+    clearTimeout(netTimer);
+    if (!msg) { el.classList.remove('show'); return; }
+    el.textContent = msg;
+    el.className = 'netbar show' + (kind ? ' ' + kind : '');
+    if (ms) netTimer = setTimeout(function () { el.classList.remove('show'); }, ms);
+  }
+
+  // 统一的重试包装：网络抖动时自动重试几次，仍失败才报错给用户看
+  function retry(fn, times, gap) {
+    times = times || 3; gap = gap || 800;
+    return new Promise(function (resolve, reject) {
+      var left = times;
+      function attempt() {
+        fn().then(resolve).catch(function (err) {
+          left--;
+          if (left <= 0) { reject(err); return; }
+          setTimeout(attempt, gap);
+        });
+      }
+      attempt();
+    });
+  }
+
+  // ---------------- 联机 ----------------
+  function wsUrl() {
+    // 静态托管（GitHub Pages / surge 等）上跑不了 Node 联机服务，
+    // 这时联机按钮会连不上。判定方法：页面被嵌入 file:// / 或 window.__GLH_OFFLINE__ 标记。
+    if (window.__GLH_OFFLINE__) return '';
+    var proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+    return proto + location.host + '/ws';
+  }
+
+  function bindAdapter(a) {
+    adapter = a;
+    a.onOp(function (op) {
+      if (state.mode === 'host' && game) game.queueRemote(op);
+    });
+    a.onStatus(function (s) {
+      if (s === 'online') { netbar('', null); }
+      if (s === 'offline') { netbar('连不上服务器，正在重试…', 'warn'); }
+      if (s === 'lost') {
+        netbar('网络断了，正在重连…', 'warn');
+        tryReconnect();
+      }
+      if (s === 'peer-left') {
+        state.onlinePeer = false;
+        renderSeats();
+        if (state.phase === 'lobby') toast('好友离开 / 掉线了，等他回来', 2200);
+        else if (state.phase === 'playing') toast('好友掉线了，3 秒后自动接管他的猴子', 2600);
+      }
+      if (s === 'peer-join') {
+        state.onlinePeer = true;
+        renderSeats();
+        netbar('好友已连接', 'ok', 1600);
+      }
+    });
+  }
+
+  // 房间没了（服务器重启过），好友这边救不回来 —— 只能回首页并说清楚
+  function bailOutRoomGone() {
+    if (state.phase === 'home') return;
+    if (lobbyTimer) { clearInterval(lobbyTimer); lobbyTimer = null; }
+    if (syncTimer) { clearInterval(syncTimer); syncTimer = null; }
+    netbar('房间已失效，请让房主重新建房', 'warn');
+    toast('和房间断开太久了，接不回来了。让房主重新建个房间，再把房号发你', 4500);
+    try { adapter && adapter.leave(); } catch (e) {}
+    state.phase = 'home'; state.mode = 'solo'; started = false;
+    show('scrHome');
+  }
+
+  // 断线重连：退避重试，成功后把房间状态接回来
+  var reconnecting = false;
+  function tryReconnect() {
+    if (reconnecting || !adapter || !adapter.reconnect) return;
+    reconnecting = true;
+    var tries = 0;
+    (function attempt() {
+      tries++;
+      netbar('网络断了，正在重连…（第 ' + tries + '/5 次）', 'warn');
+      adapter.reconnect().then(function (ok) {
+        if (ok) {
+          reconnecting = false;
+          netbar('已重新连接', 'ok', 2000);
+          if (state.phase === 'lobby') { startLobbyPoll(); if (state.mode === 'host') scheduleHostStart(); }
+          return;
+        }
+        if (tries >= 5) {
+          reconnecting = false;
+          var why = (adapter && adapter.lastError) || '';
+          if (why.indexOf('房间不存在') >= 0) {
+            bailOutRoomGone();
+          } else {
+            netbar('连不上服务器，请检查网络后重开房间', 'warn');
+            toast('网络一直连不上，只能先重开房间了', 3000);
+          }
+          return;
+        }
+        setTimeout(attempt, 1200 * tries);
+      });
+    })();
+  }
+
+  function resetLobbyUI() {
+    state.readyMe = false;
+    state.readyPeer = false;
+    state.onlinePeer = false;
+    applyReadyButton();
+    renderSeats();
+  }
+
+  function renderSeats() {
+    var hostMine = state.mode === 'host';
+    $('st0').textContent = hostMine ? (state.readyMe ? '已准备' : '未准备') : (state.readyPeer ? '已准备' : '未准备');
+    $('st1').textContent = hostMine ? (state.readyPeer ? '已准备' : '等待好友…') : (state.readyMe ? '已准备' : '未准备');
+    $('seat0').classList.toggle('ready', hostMine ? state.readyMe : state.readyPeer);
+    $('seat1').classList.toggle('ready', hostMine ? state.readyPeer : state.readyMe);
+    $('seat0').querySelector('.nm').textContent = hostMine ? '猴哥（我）' : '猴哥';
+    $('seat1').querySelector('.nm').textContent = hostMine ? (state.onlinePeer ? '好友' : '等待好友…') : '好友（我）';
+  }
+
+  function enterLobby(code) {
+    state.seat = mySeat();          // 座位只由"我是房主/客人"决定，不再用服务端返回的 index
+    state.phase = 'lobby';
+    state.started = false;
+    started = false;
+    $('lobby').style.display = 'flex';
+    $('roomCode').textContent = code;
+    resetLobbyUI();
+    show('scrRoom');
+    startLobbyPoll();
+  }
+
+  // 统一的开局条件：房间里两个座位都 ready 才算真的可以开。
+  // 只看对方是常见错误 —— 房主自己没点准备也会被开了。
+  function bothReady(v) {
+    if (!v || !v.ready) return false;
+    return !!(v.ready[0] && v.ready[1]);
+  }
+
+  function startLobbyPoll() {
+    if (lobbyTimer) clearInterval(lobbyTimer);
+    var polling = false;       // 防止请求重叠堆积（网络慢时会雪崩）
+    var fails = 0;
+    lobbyTimer = setInterval(function () {
+      if (!adapter || state.phase !== 'lobby') return;
+      if (polling) return;     // 上一个还没回来，这轮跳过
+      polling = true;
+      adapter.pullState().then(function (v) {
+        polling = false;
+        fails = 0;
+        if (!v) return;
+        // 注意：这里必须用【房间座位号】去读，不能用 state.seat（那是游戏内猴子号）
+        var otherRoomSeat = 1 - myRoomSeat();
+        state.onlinePeer = !!(v.online && v.online[otherRoomSeat]);
+        state.readyPeer = !!(v.ready && v.ready[otherRoomSeat]);
+        renderSeats();
+        // 新一局从"非 live"开始，只有房主真正点开始后才变 live
+        if (!v.state || !v.state.live) peerStarted = false;
+        if (v.state && v.state.live && !started && state.mode === 'guest') {
+          started = true;
+          clearInterval(lobbyTimer); lobbyTimer = null;
+          beginPlayFromNet(v.state.seed);
+        }
+        // 房主：双方都准备好了就在这里直接开局（不依赖按钮那次请求）。
+        // 必须同时检查【房主自己】和【好友】的 ready —— 只检查好友的话，
+        // 好友一点准备房主就被拽进游戏了，体验很莫名其妙。
+        if (state.mode === 'host' && !started && bothReady(v)) {
+          beginPlayFromNetHost();
+        }
+      }).catch(function () {
+        polling = false;
+        fails++;
+        // 一直拉不到状态就必须让用户看见，绝不能静默卡在房间里
+        if (fails >= 3) {
+          var why = (adapter && adapter.lastError) || '';
+          if (why.indexOf('房间不存在') >= 0) {
+            netbar('房间已失效（服务器重启过）', 'warn');
+          } else if (!reconnecting) {
+            netbar('网络不稳定，正在重试…（第 ' + fails + ' 次）', 'warn');
+          }
+        }
+        // 断线后自己起不来就主动重连；好友端房间失效则直接给出口
+        if (fails === 4 && adapter && adapter.reconnect) tryReconnect();
+        // 好友端连续拉不到（多半是服务重启、房间没了）—— 别让人干等，超时就说明白
+        if (state.mode === 'guest' && fails === 12 && state.phase === 'lobby') {
+          bailOutRoomGone();
+        }
+      });
+    }, 1000);
+  }
+
+  function sendOp(op) {
+    if (!adapter) return;
+    op.seq = ++opSeq;
+    adapter.sendOp(op);
+  }
+  var opSeq = 0;
+
+  function pushHostState() {
+    if (!adapter) return;
+    if (typeof game.hasBegun !== 'function' ? false : !game.hasBegun()) return;
+    adapter.pushState({
+      live: true, seed: game.seed, s: 2, snap: game.snapshot()
+    }, true);
+  }
+
+  function beginPlayFromNet(seed) {
+    state.phase = 'playing';
+    newGame(seed);
+    hideScreens();
+    game.start();
+    sfx.play('ready');
+    toast('开局！看准自己头上带"我"标的那只', 2000);
+    if (state.mode === 'guest') startGuestSync();
+  }
+
+  function startGuestSync() {
+    if (syncTimer) clearInterval(syncTimer);
+    syncTimer = setInterval(function () {
+      if (!adapter || state.mode !== 'guest') return;
+      adapter.pullState().then(function (v) {
+        if (!v) return;
+        // 房主主动退出了这一局：把我一起带回首页，别把我挂在半局里
+        if (v.state && v.state.quit) {
+          stopNet();
+          state.mode = 'solo'; state.phase = 'home';
+          show('scrHome');
+          toast('房主退出了这一局', 2000);
+          return;
+        }
+        if (v.state && v.state.snap) game.applySnapshot(v.state.snap);
+      }).catch(function () {});
+    }, 180);
+  }
+
+  function stopNet() {
+    if (lobbyTimer) clearInterval(lobbyTimer); lobbyTimer = null;
+    if (syncTimer) clearInterval(syncTimer); syncTimer = null;
+    if (adapter) { try { adapter.leave(); } catch (e) {} adapter = null; }
+    started = false;
+    $('lobby').style.display = 'none';
+  }
+
+  // ---------------- 按钮 ----------------
+  function startSoloGame() {
+    stopNet();
+    state.mode = 'solo';
+    state.phase = 'playing';
+    newGame();
+    hideScreens();
+    game.start();
+    sfx.play('ready');
+  }
+
+  $('btnSolo').onclick = startSoloGame;
+  $('btnRoom').onclick = function () {
+    $('lobby').style.display = 'none';
+    $('inpCode').value = (location.search.match(/[?&]room=(\d{4})/) || [])[1] || '';
+    show('scrRoom');
+  };
+  $('btnHow').onclick = function () { show('scrHow'); };
+  $('btnHowBack').onclick = function () { show('scrHome'); };
+  $('btnRoomBack').onclick = function () { stopNet(); state.mode = 'solo'; show('scrHome'); };
+
+  $('btnCreate').onclick = function () {
+    stopNet();
+    bindAdapter(new Net.WsAdapter(wsUrl()));
+    adapter.createRoom({ name: '猴哥' }).then(function (code) {
+      state.mode = 'host';
+      enterLobby(code);
+      toast('房间建好了，把房号发给好友');
+    }).catch(function (e) {
+      toast('建房失败：' + e.message, 2500);
+    });
+  };
+
+  $('btnJoin').onclick = function () {
+    var code = ($('inpCode').value || '').trim();
+    if (!/^\d{4}$/.test(code)) { toast('请输入 4 位房号'); return; }
+    stopNet();
+    bindAdapter(new Net.WsAdapter(wsUrl()));
+    adapter.joinRoom(code, { name: '好友' }).then(function (d) {
+      state.mode = 'guest';
+      enterLobby(d.roomCode);
+      if (d.view) {
+        // 用【房间座位号】反推对手座位，别写死 0 —— 详见 myRoomSeat() 的注释
+        state.onlinePeer = !!(d.view.online && d.view.online[1 - myRoomSeat()]);
+        state.readyPeer = !!(d.view.ready && d.view.ready[1 - myRoomSeat()]);
+        renderSeats();
+      }
+      toast('进房了，等房主开局');
+    }).catch(function (e) {
+      toast(e.message, 2200);
+    });
+  };
+
+  // 准备状态可切换：点了变"已准备（点一下取消）"，再点取消
+  var readyBusy = false;
+  $('btnReady').onclick = function () {
+    if (!adapter || readyBusy) return;
+    var next = !state.readyMe;
+    readyBusy = true;
+    $('btnReady').disabled = true;
+    adapter.setReady(next).then(function () {
+      readyBusy = false;
+      state.readyMe = next;
+      applyReadyButton();
+      renderSeats();
+      if (next) {
+        if (state.mode === 'host') {
+          // 房主也准备后，立刻看看对方是不是也好了
+          checkStartAsHost();
+        } else {
+          toast('已准备，等房主开局…', 1800);
+        }
+      } else {
+        toast('已取消准备', 1400);
+      }
+    }).catch(function () {
+      readyBusy = false;
+      // 失败时把状态还原，别让按钮显示和真实状态不一致
+      applyReadyButton();
+      toast('操作失败，请检查网络后重试', 2000);
+    });
+  };
+
+  function applyReadyButton() {
+    var b = $('btnReady');
+    b.disabled = false;
+    if (state.readyMe) {
+      b.textContent = '已准备（点一下取消）';
+      b.classList.add('is-ready');
+    } else {
+      b.textContent = '我准备好了';
+      b.classList.remove('is-ready');
+    }
+  }
+
+  $('btnLeaveRoom').onclick = function () {
+    stopNet();
+    state.mode = 'solo';
+    state.phase = 'home';
+    $('bestScore').textContent = localStorage.getItem('glh_best') || 0;
+    show('scrHome');
+    toast('已离开房间', 1400);
+  };
+
+  /**
+   * 房主开局。
+   * 老版本的坑：只查一次、而且没有 catch —— 网络抖一下 promise 就静默 reject，
+   * 结果"好友已准备但游戏开不起来"，还得手动重按一次（有时网络好就成）。
+   * 现在：带重试 + 失败可见 + 轮询兜底，只要对方准备好了就一定会开局。
+   */
+  var startChecking = false;
+  var startRetry = 0;
+
+  function checkStartAsHost() {
+    if (!adapter || state.mode !== 'host' || state.phase !== 'lobby') return;
+    if (startChecking) return;
+    startChecking = true;
+    retry(function () { return adapter.pullState(); }, 3, 700).then(function (v) {
+      startChecking = false;
+      startRetry = 0;
+      netbar('', null);
+      if (v && bothReady(v)) {
+        beginPlayFromNetHost();
+      } else {
+        // 对方还没准备 —— 提示一次就好，不用反复催
+        if (startRetry++ === 0) toast('等好友准备好就能开始', 1800);
+      }
+    }).catch(function (e) {
+      startChecking = false;
+      // 网络真的不通：明确告诉用户，并继续后台重试，网络恢复后会自动开局
+      if (startRetry++ % 3 === 0) {
+        netbar('网络不稳定，正在重试开局…', 'warn');
+        toast('网络不太好，正在重试…（可以先让对方再点一下准备）', 2400);
+      }
+      setTimeout(function () {
+        if (state.phase === 'lobby') checkStartAsHost();
+      }, 1500);
+    });
+  }
+
+  // 房主真正开始一局
+  function beginPlayFromNetHost() {
+    if (started) return;
+    started = true;
+    if (lobbyTimer) { clearInterval(lobbyTimer); lobbyTimer = null; }
+    state.phase = 'playing';
+    newGame(Math.floor(Math.random() * 1e9));
+    hideScreens();
+    game.start();
+    sfx.play('ready');
+    toast('开局！看准自己头上带"我"标的那只', 2000);
+    pushHostState();
+  }
+
+  // 房主：轮询里发现对方已准备也自动开局（双保险，不依赖上面那次请求成功）
+  function scheduleHostStart() {
+    // 已经由轮询触发，这里只是复位标记，避免重复开局
+    if (state.mode === 'host' && state.phase === 'lobby') startRetry = 0;
+  }
+
+  $('btnCopy').onclick = function () {
+    var code = $('roomCode').textContent;
+    var url = location.origin + location.pathname + '?room=' + code;
+    var text = '来打一局「哥俩好」！房号 ' + code + ' → ' + url;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { toast('邀请文案已复制'); },
+        function () { window.prompt('复制这条邀请发给好友', text); });
+    } else {
+      window.prompt('复制这条邀请发给好友', text);
+    }
+  };
+
+  $('btnAgain').onclick = function () {
+    $('btnQuit').classList.remove('show');
+    if (state.mode === 'solo') { startSoloGame(); return; }
+    if (state.mode === 'host') {
+      state.phase = 'lobby';
+      started = false;
+      resetLobbyUI();
+      state.readyMe = true;
+      $('btnReady').disabled = true;
+      $('btnReady').textContent = '已准备';
+      show('scrRoom');
+      $('lobby').style.display = 'flex';
+      startLobbyPoll();
+      if (adapter) adapter.setReady(true);
+      checkStartAsHost();
+      return;
+    }
+    show('scrRoom');
+    $('lobby').style.display = 'flex';
+  };
+
+  $('btnHome').onclick = function () {
+    stopNet();
+    state.mode = 'solo';
+    state.phase = 'home';
+    $('btnQuit').classList.remove('show');
+    $('bestScore').textContent = localStorage.getItem('glh_best') || 0;
+    show('scrHome');
+  };
+
+  // ---------------- 游戏中退出 ----------------
+  $('btnQuit').onclick = function () {
+    if (state.phase !== 'playing' && state.phase !== 'ready') return;
+    var online = state.mode !== 'solo';
+    var msg = online
+      ? '退出这一局？房间会解散，好友也会被带回首页。'
+      : '退出这一局？本局分数不会记录。';
+    if (!window.confirm(msg)) return;
+    quitGame();
+  };
+
+  function quitGame() {
+    // 联机：先把"我退了"告诉对方，让对面也能退出，别卡在半局
+    if (adapter && state.mode !== 'solo') {
+      try { adapter.pushState({ live: false, s: 0, quit: true }, false); } catch (e) {}
+    }
+    stopNet();
+    state.mode = 'solo';
+    state.phase = 'home';
+    $('btnQuit').classList.remove('show');
+    $('bestScore').textContent = localStorage.getItem('glh_best') || 0;
+    show('scrHome');
+    toast('已退出本局', 1400);
+  }
+
+  // ---------------- 启动 ----------------
+  var mRoom = location.search.match(/[?&]room=(\d{4})/);
+  $('bestScore').textContent = localStorage.getItem('glh_best') || 0;
+  newGame();
+  fit();
+  if (mRoom) {
+    $('inpCode').value = mRoom[1];
+    show('scrRoom');
+  } else {
+    show('scrHome');
+  }
+  requestAnimationFrame(loop);
+
+  // 调试 / 自动化测试接口
+  window.GLH = {
+    get game() { return game; },
+    get state() { return state; },
+    canPress: canPress,
+    startSolo: startSoloGame,
+    pressStart: function () { if (game) game.pressStart(); },
+    pressEnd: function () { if (game) game.pressEnd(); },
+    jump: function (dist) {
+      if (!game || game.state !== 'playing') return;
+      game.pressStart();
+      var m = game.monkeys[game.active];
+      m.chargeT = game.chargeFor(dist);
+      game.pressEnd();
+    }
+  };
+
+  }  // boot()
+})();
+  });
+
+  __req('/web/app.js');
+  window.__glhBundled = true;
+})();
