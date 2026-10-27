@@ -376,3 +376,5 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
   color: #fff;
 }
 .btn.daily:active { transform: scale(0.98); }
+
+.ver { font-size: 11px; color: #b7a893; margin-top: 6px; letter-spacing: 0.5px; }
