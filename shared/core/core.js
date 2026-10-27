@@ -35,8 +35,28 @@
     GOLD_BONUS: 50,
     SWING_LIFT: 2.6,      // 绳子绷紧且下方那只下落时，把它往上悠的加速度系数
     MAX_FALLS_PER_CP: 3,  // 同一检查点连续坠落 3 次 -> 判定卡关，结算（防焊死）
-    BOTH_WET_DELAY: 0.9   // 双落水后停顿这么久再回检查点/结算（给"完蛋感"留表演时间）
+    BOTH_WET_DELAY: 0.9,  // 双落水后停顿这么久再回检查点/结算（给"完蛋感"留表演时间）
+    // ---- 二期：面包和年糕式地形 2.0 ----
+    MV_CHANCE: 0.18,      // 移动浮台概率（仅山腰以上生成）
+    MV_AMP_MIN: 26, MV_AMP_MAX: 44,   // 浮台水平巡逻幅度（半程）
+    MV_PERIOD_MIN: 2.6, MV_PERIOD_MAX: 3.8, // 巡逻一个来回的秒数
+    SPRING_CHANCE: 0.11,  // 弹跳蘑菇概率（山腰以上；上面不刷障碍）
+    SPRING_POWER: 0.95,   // 蘑菇弹跳力度（相对满蓄力的比例）
+    WIND_FROM: 2600,      // 阵风区从这段距离开始出现（进山了）
+    WIND_SPACING: 720,    // 两个风区至少隔这么远
+    WIND_CHANCE: 0.42,    // 满足间距后每个新坑位刷风的概率
+    WIND_F_MIN: 55, WIND_F_MAX: 105  // 风力（水平加速度 px/s^2，方向随机）
   };
+
+  // 山体主题：由 levelAt() 的档位驱动，渲染层读同一个下标做配色/飘雪
+  // （面包和年糕的"山脚 -> 雪线 -> 暴风雪山顶"爬升感）
+  var THEMES = [
+    { name: '山脚草坡', snow: 0 },
+    { name: '针叶林带', snow: 0 },
+    { name: '碎石坡',   snow: 0 },
+    { name: '雪线以上', snow: 0.35 },
+    { name: '暴风雪山顶', snow: 1 }
+  ];
 
   var LEVELS = [
     { until: 900,  gapMin: 55,  gapMax: 105, platMin: 80,  platMax: 128, obs: 0,    spike: false, ice: false },
@@ -65,6 +85,18 @@
   function levelAt(x) {
     for (var i = 0; i < LEVELS.length; i++) if (x < LEVELS[i].until) return LEVELS[i];
     return LEVELS[LEVELS.length - 1];
+  }
+
+  function levelIdx(x) {
+    for (var i = 0; i < LEVELS.length; i++) if (x < LEVELS[i].until) return i;
+    return LEVELS.length - 1;
+  }
+
+  // 三角波（确定性巡逻：不积累误差，快照/联机两端时间略偏也只差一小格）
+  // u ∈ [0,1) → -1 → +1 → -1
+  function tri01(t) {
+    var f = t - Math.floor(t);
+    return f < 0.5 ? f * 4 - 1 : 3 - f * 4;
   }
 
   function Monkey(idx) {
@@ -121,6 +153,8 @@
     this.shake = 0;
     this.platforms = [];
     this.obstacles = [];
+    this.winds = [];          // 阵风区 [{x0,x1,fx}]（确定性生成，两端一致）
+    this._lastWindX = CFG.WIND_FROM;
     this.pickups = [];
     this.decos = [];
     this.particles = [];
@@ -183,14 +217,42 @@
       var p = { x: last.x + last.w + gap, w: pw, y: y, type: 'normal' };
       if (L.ice && r() < 0.22) p.type = 'ice';
 
-      if (r() < L.obs && pw > 86) {
+      // 移动浮台（山腰以上）：绕初始点做三角波巡逻，位置由时间决定、两端一致
+      var li = levelIdx(p.x);
+      if (li >= 3 && r() < CFG.MV_CHANCE && pw >= 60 && p.type !== 'ice') {
+        p.type = 'float';
+        p.x0 = p.x;
+        p.amp = Math.round(lerp(CFG.MV_AMP_MIN, CFG.MV_AMP_MAX, r()));
+        p.period = lerp(CFG.MV_PERIOD_MIN, CFG.MV_PERIOD_MAX, r());
+        p.ph = r();
+        p.spd = 1 / p.period;
+      }
+      // 弹跳蘑菇（山腰以上）：踩上去自动弹起，力度≈满蓄力，上面不放障碍
+      var isSpring = false;
+      if (li >= 2 && p.type === 'normal' && r() < CFG.SPRING_CHANCE && pw >= 64) {
+        p.type = 'spring';
+        isSpring = true;
+      }
+
+      // 阵风区（进山后）：挂在坑位上空，空中被水平吹；带风牌提示
+      if (p.x > this._lastWindX + CFG.WIND_SPACING && r() < CFG.WIND_CHANCE) {
+        var fx = (r() < 0.5 ? -1 : 1) * lerp(CFG.WIND_F_MIN, CFG.WIND_F_MAX, r());
+        this.winds.push({
+          x0: Math.round(last.x + last.w - 30),
+          x1: Math.round(p.x + 30),
+          fx: Math.round(fx)
+        });
+        this._lastWindX = p.x;
+      }
+
+      if (!isSpring && r() < L.obs && pw > 86) {
         this.obstacles.push({
           kind: r() < 0.55 ? 'bear' : 'piranha',
           x: Math.round(p.x + pw * (0.4 + r() * 0.25)),
           y: y, w: 26, h: 26, dead: false
         });
       }
-      if (L.spike && r() < 0.28 && pw > 80) {
+      if (!isSpring && L.spike && r() < 0.28 && pw > 80) {
         this.obstacles.push({ kind: 'spike', x: Math.round(p.x + pw * 0.55), y: y, w: 22, h: 12, dead: false });
       }
       if (r() < 0.7 && pw > 84) this.pickups.push({ x: Math.round(p.x + pw * 0.5), y: y - 48, taken: false, t: r() * 6 });
@@ -219,6 +281,7 @@
     if (this.platforms.length > 10) {
       this.platforms = this.platforms.filter(function (p) { return p.x + p.w > cut; });
       this.obstacles = this.obstacles.filter(function (o) { return o.x > cut; });
+      this.winds = this.winds.filter(function (w) { return w.x1 > cut; });
       this.pickups = this.pickups.filter(function (o) { return o.x > cut; });
       this.decos = this.decos.filter(function (o) { return o.x > cut; });
     }
@@ -306,13 +369,32 @@
   // 水平：vx(t) = vx0 * e^(-DRAG*t)  →  x(t) = x0 + vx0 * (1 - e^(-DRAG*t)) / DRAG
   // 竖直：y(t) = y0 + vy0*t + 0.5*G*t^2（无阻尼）
   var DRAG = 0.25;
+
+  // x 处的风力（不在任何风区返回 0）。地形生成与主循环共用，保证瞄准线不骗人
+  Game.prototype._windAt = function (x) {
+    for (var i = 0; i < this.winds.length; i++) {
+      var w = this.winds[i];
+      if (x >= w.x0 && x <= w.x1) return w.fx;
+    }
+    return 0;
+  };
+
+  // 落点预测：数字积分，和 update() 的物理完全一致（阻尼 + 风），保证瞄准线可信。
+  // 旧版闭式解没法算风，风区里"瞄哪落哪"会失灵，已改成 1/120s 步进积分。
   Game.prototype.projectLanding = function (fromX, power, fromY) {
     var dist = CFG.MIN_JUMP + clamp(power, 0, 1) * CFG.JUMP_RANGE;
     var vx = dist * CFG.JUMP_VX, vy = -dist * CFG.JUMP_VY;
-    var drop = Math.max(0, (fromY || CFG.GROUND_Y) - CFG.GROUND_Y);
-    var t = (-vy + Math.sqrt(vy * vy + 2 * CFG.GRAVITY * drop)) / CFG.GRAVITY;
-    var travel = vx * (1 - Math.exp(-DRAG * t)) / DRAG;
-    return fromX + travel;
+    var x = fromX, y = fromY || CFG.GROUND_Y;
+    var dt = 1 / 120;
+    for (var i = 0; i < 900; i++) {
+      vx += this._windAt(x) * dt;
+      vx *= (1 - DRAG * dt);
+      vy += CFG.GRAVITY * dt;
+      x += vx * dt;
+      y += vy * dt;
+      if (vy > 0 && y >= CFG.GROUND_Y) break;
+    }
+    return x;
   };
 
   Game.prototype.chargeRatio = function () {
@@ -329,6 +411,27 @@
     dt = Math.min(dt, 1 / 30);
     this.time += dt;
     var ms = this.monkeys;
+
+    // 移动浮台：先记下每只猴站的台子，推台子，再带着猴一起走
+    // （不载猴的话猴会悬在原地被台子甩出去，看着像 bug）
+    for (var pi = 0; pi < this.platforms.length; pi++) {
+      var pl = this.platforms[pi];
+      if (!pl.mv && pl.type !== 'float') continue;
+      if (pl.x0 === undefined) { pl.x0 = pl.x; pl.amp = 30; pl.spd = 1 / 3; pl.ph = 0; }
+      var nx = pl.x0 + pl.amp * tri01(this.time * pl.spd + pl.ph);
+      pl._dx = nx - pl.x;
+      pl.x = nx;
+    }
+    for (var mi = 0; mi < 2; mi++) {
+      var mm = ms[mi];
+      if (!mm.grounded || mm.wetT > 0) continue;
+      var stand = this.platformAt(mm.x);
+      if (stand && stand.type === 'float' && stand._dx) mm.x += stand._dx;
+      // 站着的台子被移走了/不在脚下 → 开始下坠（覆盖所有平台的兜底）
+      var under = this.platformAt(mm.x);
+      if (!under) { mm.grounded = false; }
+      else if (Math.abs(mm.y - under.y) > 0.5) mm.y = under.y;
+    }
 
     for (var i = 0; i < 2; i++) {
       var m = ms[i];
@@ -347,7 +450,12 @@
           if (hit) this._land(m, hit);
           else if (!this.platformAt(m.x) && m.y > CFG.GROUND_Y + 14) this._wet(m);
         }
-        if (!m.grounded) m.vx *= (1 - 0.25 * dt);
+        // 阵风：只在空中受力（地面无感，落地即安全），方向和强度由地形决定
+        if (!m.grounded) {
+          m.vx *= (1 - 0.25 * dt);
+          var wf = this._windAt(m.x);
+          if (wf) m.vx += wf * dt;
+        }
       }
     }
 
@@ -528,6 +636,20 @@
     m.vx = 0;
     m.grounded = true;
     m.squash = 1.18;
+    // 弹跳蘑菇：踩上去自动弹起（≈满蓄力），连击不清零也不算完美——
+    // 它是"路线奖励"不是"技术判定"，跳上去该去哪由玩家下次蓄力决定
+    if (plat.type === 'spring' && m.vy >= 0) {
+      var sd = CFG.MIN_JUMP + CFG.JUMP_RANGE * CFG.SPRING_POWER;
+      m.vx = sd * CFG.JUMP_VX;
+      m.vy = -sd * CFG.JUMP_VY;
+      m.grounded = false;
+      m.squash = 0.68;
+      m.hasJumped = true;
+      this._float(m.x, plat.y - 86, '弹！', '#7048e8');
+      this._burst(m.x, plat.y, 9, '#d0bfff');
+      this.emit('spring', { idx: m.idx });
+      return;
+    }
     // 记录"站稳过的最远位置"：换人时用它判断谁落后、这一棒是否已经跳完
     if (m.progressX < m.x) m.progressX = m.x;
     this._burst(m.x, plat.y, 5, plat.type === 'ice' ? '#bdf1ff' : '#d8e3a8');
@@ -704,6 +826,7 @@
       coins: this.coins, rescues: this.rescues,
       falls: this.falls, bestCombo: this.bestCombo,
       perfects: this.perfects, golds: this.golds,
+      time: Math.round(this.time),
       reason: reason || 'both-wet'
     });
   };
@@ -880,5 +1003,5 @@
     if (this.shake > 0) this.shake = Math.max(0, this.shake - dt * 3);
   };
 
-  return { Game: Game, CFG: CFG, LEVELS: LEVELS, mulberry32: mulberry32 };
+  return { Game: Game, CFG: CFG, LEVELS: LEVELS, THEMES: THEMES, mulberry32: mulberry32 };
 });
