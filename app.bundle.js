@@ -1,6 +1,6 @@
 /* eslint-disable */
 /* 哥俩好 · 网页端单文件打包产物 —— 由 scripts/build-web-bundle.js 自动生成，请勿手改 */
-/* 生成时间：2026-10-27T01:53:26.986Z */
+/* 生成时间：2026-10-27T03:12:57.730Z */
 (function () {
   'use strict';
   var __mods = {};
@@ -68,8 +68,16 @@
     WIND_FROM: 2600,      // 阵风区从这段距离开始出现（进山了）
     WIND_SPACING: 720,    // 两个风区至少隔这么远
     WIND_CHANCE: 0.42,    // 满足间距后每个新坑位刷风的概率
-    WIND_F_MIN: 55, WIND_F_MAX: 105  // 风力（水平加速度 px/s^2，方向随机）
+    WIND_F_MIN: 115, WIND_F_MAX: 195, // 风力（水平加速度 px/s^2，方向随机；玩家要能明确感到被推）
+    WIND_ON_MIN: 5, WIND_ON_MAX: 9,   // 阵风：刮这么久
+    WIND_OFF_MIN: 2.5, WIND_OFF_MAX: 5, // 停这么久（呼吸式节律，顺风窗口要等）
+    GUST_RAMP: 0.8,                   // 起风/停风各用这么久渐变（不是瞬间开关）
+    HIT_PENALTY: 20,                  // 撞尖刺扣分
+    SPIKE_EDGE: 0.72                  // 尖刺只放在平台外侧 28% 区域（落中间=安全）
   };
+
+  // 版本号：日期 + 当日构建序号，首页展示
+  var VERSION = 'v2026.10.27-r7';
 
   // 山体主题：由 levelAt() 的档位驱动，渲染层读同一个下标做配色/飘雪
   // （面包和年糕的"山脚 -> 雪线 -> 暴风雪山顶"爬升感）
@@ -178,6 +186,10 @@
     this.obstacles = [];
     this.winds = [];          // 阵风区 [{x0,x1,fx}]（确定性生成，两端一致）
     this._lastWindX = CFG.WIND_FROM;
+    // 关卡分段风格：每 5-8 块换一种节奏，别一路均速匀距（相似度太高）
+    this._segStyle = 'normal';
+    this._segLeft = 0;
+    this._segYDir = 1;
     this.pickups = [];
     this.decos = [];
     this.particles = [];
@@ -234,9 +246,45 @@
     while (last.x + last.w < targetX && guard++ < 200) {
       var L = levelAt(last.x + last.w);
       var r = this.rng;
+      var li = levelIdx(last.x + last.w);
+
+      // ---- 分段风格：每段 5-8 块，给关卡"章节感" ----
+      if (this._segLeft <= 0) {
+        var styles = ['normal', 'normal', 'airy', 'steps', 'islands', 'wide'];
+        this._segStyle = styles[Math.floor(r() * styles.length)];
+        this._segLeft = 5 + Math.floor(r() * 4);
+        this._segYDir = r() < 0.5 ? -1 : 1;
+      }
+      this._segLeft--;
+
       var gap = Math.round(lerp(L.gapMin, L.gapMax, r()));
       var pw = Math.round(lerp(L.platMin, L.platMax, r()));
-      var y = CFG.GROUND_Y + Math.round((r() * 2 - 1) * 10);
+      // 高度起伏随档位放开：山脚±10 → 高处±34（还是平台间跳，不是跳崖）
+      var ySpan = Math.min(34, 10 + li * 6);
+      var y = CFG.GROUND_Y + Math.round((r() * 2 - 1) * ySpan);
+      var style = this._segStyle;
+      if (style === 'airy') {
+        // 大空档：逼近单跳极限（满蓄力水平位移 ≈174px）但绝不越过——
+        // 空档 >174 就是物理上跳不过去的死局（荡绳助力只在两只都离地时才有），
+        // 所以硬顶 168，留 6px 余量，再配宽落点降低精度要求
+        gap = Math.round(Math.min(168, gap * 1.45 + 24));
+        pw = Math.max(pw, 96);
+      } else if (style === 'steps') {
+        // 台阶：坑短，但高度一上一下交错，节奏完全不同
+        gap = Math.round(gap * 0.55);
+        y += this._segYDir * Math.round(14 + r() * 14);
+        this._segYDir *= -1;
+      } else if (style === 'islands') {
+        // 孤岛：平台窄，坑正常，容错低
+        pw = Math.max(46, Math.round(pw * 0.6));
+        gap = Math.round(gap * 1.1);
+      } else if (style === 'wide') {
+        // 宽台：喘息段，顺带刷币
+        pw = Math.min(230, Math.round(pw * 1.7));
+      }
+      // 全局可达性护栏：任何风格组合出的空档都不得超过单跳极限（174px）减余量
+      gap = Math.min(gap, 168);
+      y = clamp(y, CFG.GROUND_Y - 44, CFG.GROUND_Y + 34);
       var p = { x: last.x + last.w + gap, w: pw, y: y, type: 'normal' };
       if (L.ice && r() < 0.22) p.type = 'ice';
 
@@ -260,10 +308,16 @@
       // 阵风区（进山后）：挂在坑位上空，空中被水平吹；带风牌提示
       if (p.x > this._lastWindX + CFG.WIND_SPACING && r() < CFG.WIND_CHANCE) {
         var fx = (r() < 0.5 ? -1 : 1) * lerp(CFG.WIND_F_MIN, CFG.WIND_F_MAX, r());
+        // 公平性护栏：空档本来就接近单跳极限时，风只准顺吹（帮玩家飞过去），
+        // 否则顶风 + 大空档 = 又一个物理死局
+        if (gap > 150) fx = Math.abs(fx);
         this.winds.push({
           x0: Math.round(last.x + last.w - 30),
           x1: Math.round(p.x + 30),
-          fx: Math.round(fx)
+          fx: Math.round(fx),
+          tOn: lerp(CFG.WIND_ON_MIN, CFG.WIND_ON_MAX, r()),   // 刮多久
+          tOff: lerp(CFG.WIND_OFF_MIN, CFG.WIND_OFF_MAX, r()), // 停多久
+          ph: r() * 8    // 节律相位（错开各个风区，别全图同呼吸）
         });
         this._lastWindX = p.x;
       }
@@ -275,8 +329,10 @@
           y: y, w: 26, h: 26, dead: false
         });
       }
-      if (!isSpring && L.spike && r() < 0.28 && pw > 80) {
-        this.obstacles.push({ kind: 'spike', x: Math.round(p.x + pw * 0.55), y: y, w: 22, h: 12, dead: false });
+      // 尖刺只占平台外侧 28%（右缘朝坑方向）：落中间就绝对安全，看见尖刺就往中间瞄。
+      // 旧版放在 0.55 处（平台中部），跟"完美着陆圈"抢地盘又躲不开，纯坑
+      if (!isSpring && L.spike && r() < 0.24 && pw > 88) {
+        this.obstacles.push({ kind: 'spike', x: Math.round(p.x + pw * (CFG.SPIKE_EDGE + r() * 0.16)), y: y, w: 22, h: 12, dead: false });
       }
       if (r() < 0.7 && pw > 84) this.pickups.push({ x: Math.round(p.x + pw * 0.5), y: y - 48, taken: false, t: r() * 6 });
       if (r() < 0.45) this.pickups.push({ x: Math.round(p.x + pw * 0.78), y: y - 82, taken: false, t: r() * 6 });
@@ -393,11 +449,20 @@
   // 竖直：y(t) = y0 + vy0*t + 0.5*G*t^2（无阻尼）
   var DRAG = 0.25;
 
-  // x 处的风力（不在任何风区返回 0）。地形生成与主循环共用，保证瞄准线不骗人
+  // 阵风系数 0..1：刮 tOn 秒、停 tOff 秒，起/停各有 GUST_RAMP 渐变（呼吸式，不是电闸）
+  Game.prototype._gustAt = function (w) {
+    var on = w.tOn || 6, off = w.tOff || 3, ramp = CFG.GUST_RAMP;
+    var u = (this.time + (w.ph || 0)) % (on + off);
+    if (u < on) return Math.max(0, Math.min(1, u / ramp, (on - u) / ramp));
+    return 0;
+  };
+
+  // x 处的风力（不在任何风区返回 0；风区内乘阵风系数）。
+  // 地形生成、主循环、落点预测共用，保证瞄准线不骗人
   Game.prototype._windAt = function (x) {
     for (var i = 0; i < this.winds.length; i++) {
       var w = this.winds[i];
-      if (x >= w.x0 && x <= w.x1) return w.fx;
+      if (x >= w.x0 && x <= w.x1) return w.fx * this._gustAt(w);
     }
     return 0;
   };
@@ -763,10 +828,12 @@
         if (p2 && m.y >= p2.y - 40) { this._rescued(m, p2); continue; }
       }
 
-      if (m.wetT <= 0) {
-        m.y += 160 * dt;
-        if (m.y > CFG.H + 260) m.wetT = -1;
-      }
+      // 谁也不来救（伙伴也悬着）：不再无限下沉，贴着水面荡 + 慢慢往安全岸飘一点点，
+      // 等 _onBothWet 判定回档/结算。视觉上始终"看得见、够得着"
+      var homeY = CFG.GROUND_Y + 8 + Math.sin(this.time * 2.2 + m.idx * 2.1) * 3.5;
+      m.y = lerp(m.y, homeY, Math.min(1, dt * 6));
+      m.x += Math.sin(this.time * 1.4 + m.idx) * 7 * dt;
+      m.wetT -= 0;   // wetT 由主循环倒计时，这里不额外加
     }
   };
 
@@ -793,14 +860,20 @@
         if (!m.grounded || m.wetT > 0 || m.stunT > 0) continue;
         if (Math.abs(m.x - o.x) < o.w * 0.85 && Math.abs(m.y - o.y) < o.h + 16) {
           m.x = o.x - (m.x >= o.x ? 1 : -1) * (o.w * 1.0);
-          m.stunT = 0.55;
+          m.stunT = o.kind === 'spike' ? 0.3 : 0.55;   // 尖刺短晕（0.3s），别把节奏卡死
           m.squash = 0.8;
           this.combo = 0;
           o.dead = true;
           this.shake = 0.8;
-          this._burst(o.x, o.y - 12, 8, '#ff6b6b');
-          this._float(o.x, o.y - 56, o.kind === 'spike' ? '扎到啦！' : '小心！', '#e03131');
-          this.emit('hit', { idx: j, kind: o.kind });
+          if (o.kind === 'spike') {
+            this.bonus = Math.max(0, this.bonus - CFG.HIT_PENALTY);   // 扣分走 bonus（score 是派生值）
+            this._burst(o.x, o.y - 12, 8, '#ff6b6b');
+            this._float(o.x, o.y - 56, '扎到啦！-' + CFG.HIT_PENALTY, '#e03131');
+          } else {
+            this._burst(o.x, o.y - 12, 8, '#ff6b6b');
+            this._float(o.x, o.y - 56, '小心！', '#e03131');
+          }
+          this.emit('hit', { idx: j, kind: o.kind, penalty: o.kind === 'spike' ? CFG.HIT_PENALTY : 0 });
           var p = this.platformAt(m.x);
           if (p) { m.y = p.y; m.grounded = true; } else this._wet(m);
           break;
@@ -1026,7 +1099,7 @@
     if (this.shake > 0) this.shake = Math.max(0, this.shake - dt * 3);
   };
 
-  return { Game: Game, CFG: CFG, LEVELS: LEVELS, THEMES: THEMES, mulberry32: mulberry32 };
+  return { Game: Game, CFG: CFG, VERSION: VERSION, LEVELS: LEVELS, THEMES: THEMES, mulberry32: mulberry32 };
 });
   });
 
@@ -1198,7 +1271,7 @@
     var windAll = 0;
     for (var i = 0; i < (g.winds || []).length; i++) {
       var w = g.winds[i];
-      if (g.camX + CFG.W / 2 >= w.x0 && g.camX + CFG.W / 2 <= w.x1) windAll = w.fx;
+      if (g.camX + CFG.W / 2 >= w.x0 && g.camX + CFG.W / 2 <= w.x1) windAll = w.fx * (g._gustAt ? g._gustAt(w) : 1);
     }
     ctx.fillStyle = 'rgba(255,255,255,0.85)';
     var n = Math.round(this.snow.length * amt);
@@ -1382,8 +1455,11 @@
       var wl = Math.max(wnd.x0, left), wr = Math.min(wnd.x1, right);
       if (wr <= wl) continue;
       var dirw = wnd.fx >= 0 ? 1 : -1;
+      // 风线强度跟随阵风节律：停风时风线消失（和实际受力一致，不然玩家被画面骗）
+      var gust = g._gustAt ? g._gustAt(wnd) : 1;
+      if (gust <= 0.02) continue;
       ctx.save();
-      ctx.globalAlpha = 0.3;
+      ctx.globalAlpha = 0.12 + 0.26 * gust;
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = 2;
       for (var ln = 0; ln < 8; ln++) {
@@ -4719,6 +4795,7 @@ module.exports = {
   // ---------------- 启动 ----------------
   var mRoom = location.search.match(/[?&]room=(\d{4})/);
   $('bestScore').textContent = localStorage.getItem('glh_best') || 0;
+  if ($('verText')) $('verText').textContent = Core.VERSION || '';
   newGame();
   fit();
   if (mRoom) {
