@@ -1,6 +1,6 @@
 /* eslint-disable */
 /* 哥俩好 · 网页端单文件打包产物 —— 由 scripts/build-web-bundle.js 自动生成，请勿手改 */
-/* 生成时间：2026-10-27T03:12:57.730Z */
+/* 生成时间：2026-10-27T03:34:37.976Z */
 (function () {
   'use strict';
   var __mods = {};
@@ -41,13 +41,14 @@
   var CFG = {
     W: 375,
     H: 667,
-    GROUND_Y: 470,
+    GROUND_Y: 430,      // 平台基准高度（整体抬高，给下方荡猴留空间）
+    WATER_Y: 630,       // 水面：贴着画面最底部（H=667）
     GRAVITY: 1250,
     MIN_JUMP: 24,
     JUMP_RANGE: 150,      // 满蓄力相对最小跳多飞 150px：要覆盖后期最大 gap(185) - 平台半宽
     MAX_POWER_MS: 1100,   // 蓄力慢一点，落点更好拿捏
     ROPE_REST: 150,
-    PATIENCE: 1.5,
+    PATIENCE: 5.5,      // 落水后挂在绳上能荡/被救的耐心时间（秒）
     CAM_LERP: 0.12,
     // ---- 面包和年糕式丰富（均不增加按键，仍只靠长按跳跃）----
     CP_SPACING: 260,      // 检查点旗间距（世界 px）
@@ -77,7 +78,7 @@
   };
 
   // 版本号：日期 + 当日构建序号，首页展示
-  var VERSION = 'v2026.10.27-r7';
+  var VERSION = 'v2026.10.27-r8';
 
   // 山体主题：由 levelAt() 的档位驱动，渲染层读同一个下标做配色/飘雪
   // （面包和年糕的"山脚 -> 雪线 -> 暴风雪山顶"爬升感）
@@ -480,7 +481,7 @@
       vy += CFG.GRAVITY * dt;
       x += vx * dt;
       y += vy * dt;
-      if (vy > 0 && y >= CFG.GROUND_Y) break;
+      if (vy > 0 && y >= CFG.WATER_Y) break;
     }
     return x;
   };
@@ -536,7 +537,7 @@
         if (m.vy > 0) {
           var hit = this._crossedSurface(prevX, prevY, m.x, m.y);
           if (hit) this._land(m, hit);
-          else if (!this.platformAt(m.x) && m.y > CFG.GROUND_Y + 14) this._wet(m);
+          else if (!this.platformAt(m.x) && m.y > CFG.WATER_Y - 20) this._wet(m);
         }
         // 阵风：只在空中受力（地面无感，落地即安全），方向和强度由地形决定
         if (!m.grounded) {
@@ -761,14 +762,14 @@
   };
 
   Game.prototype._wet = function (m) {
-    m.y = CFG.GROUND_Y + 14;
+    m.y = CFG.WATER_Y - 8;
     m.vx = 0; m.vy = 0;
     m.grounded = false;
     m.wetT = CFG.PATIENCE;
     this.combo = 0;
     m.squash = 0.7;
     this.shake = 0.6;
-    this._burst(m.x, CFG.GROUND_Y + 2, 10, '#7fd4ff');
+    this._burst(m.x, CFG.WATER_Y - 4, 10, '#7fd4ff');
     this.emit('wet', { idx: m.idx });
   };
 
@@ -802,38 +803,61 @@
       }
     }
 
+    // ---- 落水的猴子：单摆物理 ----
+    // A 落水后挂绳吊在伙伴 B 下面：重力把它往下拽，浮力让它半浸水面不沉底，
+    // 绳长约束把位置拉回以 B 为圆心的圆上并消掉径向速度（真单摆特性）。
+    // B 一动（跳/走/收绳），A 就会跟着物理地荡起来。
     for (var i = 0; i < 2; i++) {
       var m = ms[i];
-      if (m.wetT <= 0) continue;
+      if (m.wetT <= 0 || m.wetT >= 100) continue;   // wetT>=100 是测试用的幽灵锚点，不参与物理
       var other = ms[1 - i];
+      var ax = other.x, ay = other.y + 6;   // 锚点：伙伴身上
 
-      if (other.grounded) {
-        // 伙伴站稳在岸上 -> 绳子把落水的这只往回、往上"钓"
-        var k = Math.min(1, dt * 4.5);
-        var pHome = this.platformAt(other.x);
-        var baseY = pHome ? pHome.y : other.y;
-        var inward = other.x > m.x ? -1 : 1;
-        var tx = other.x + inward * Math.min(rest * 0.72, 108);
-        var ty = this._surfaceNear(tx, baseY) - 34;
-        m.x = lerp(m.x, tx, k);
-        m.y = lerp(m.y, ty, k);
+      // 1) 力：重力 + 水面浮力（弹簧式，越深推得越狠）
+      m.vy += CFG.GRAVITY * dt;
+      var buoy = CFG.WATER_Y - 30 - m.y;
+      if (buoy > 0) m.vy -= buoy * 30 * dt;
+      m.vx *= 1 - Math.min(1, 1.1 * dt);    // 水平水阻
 
-        var pHere = this.platformAt(m.x);
-        if (pHere && m.y >= pHere.y - 40) { this._rescued(m, pHere); continue; }
-      } else if (other.y < m.y - 24) {
-        // 伙伴正往前上方跃过 -> 把他带一带
-        m.x = lerp(m.x, other.x - rest * 0.35, Math.min(1, dt * 2.4));
-        m.y = lerp(m.y, other.y, Math.min(1, dt * 1.6));
-        var p2 = this.platformAt(m.x);
-        if (p2 && m.y >= p2.y - 40) { this._rescued(m, p2); continue; }
+      m.x += m.vx * dt;
+      m.y += m.vy * dt;
+
+      // 2) 绳长约束：拉回半径 rest 的圆上，消掉径向外冲速度
+      var dx = m.x - ax, dy = m.y - ay;
+      var dd = Math.sqrt(dx * dx + dy * dy) || 1;
+      if (dd > rest) {
+        var nx = dx / dd, ny = dy / dd;
+        m.x = ax + nx * rest;
+        m.y = ay + ny * rest;
+        var vr = m.vx * nx + m.vy * ny;
+        if (vr > 0) { m.vx -= vr * nx; m.vy -= vr * ny; }
       }
 
-      // 谁也不来救（伙伴也悬着）：不再无限下沉，贴着水面荡 + 慢慢往安全岸飘一点点，
-      // 等 _onBothWet 判定回档/结算。视觉上始终"看得见、够得着"
-      var homeY = CFG.GROUND_Y + 8 + Math.sin(this.time * 2.2 + m.idx * 2.1) * 3.5;
-      m.y = lerp(m.y, homeY, Math.min(1, dt * 6));
-      m.x += Math.sin(this.time * 1.4 + m.idx) * 7 * dt;
-      m.wetT -= 0;   // wetT 由主循环倒计时，这里不额外加
+      // 2.5) 水面钳制：半浸不沉底（绳子把它拽进水里也只没到胸口）
+      if (m.y > CFG.WATER_Y + 26) {
+        m.y = CFG.WATER_Y + 26;
+        if (m.vy > 0) m.vy = 0;
+      }
+
+      // 3) 摆动阻尼：荡几下慢慢稳下来
+      m.vx *= 1 - Math.min(1, 0.5 * dt);
+      m.vy *= 1 - Math.min(1, 0.9 * dt);
+
+      // 4) 伙伴站稳在岸上 -> 慢慢收绳往上钓，够到平台就拉上来
+      if (other.grounded) {
+        var cur = Math.sqrt((m.x - ax) * (m.x - ax) + (m.y - ay) * (m.y - ay)) || 1;
+        var reel = Math.min(1, dt * 1.8);
+        var rx = (m.x - ax) / cur, ry = (m.y - ay) / cur;
+        var target = rest * 0.42;
+        m.x = lerp(m.x, ax + rx * target, reel);
+        m.y = lerp(m.y, ay + ry * target, reel);
+        var pHere = this.platformAt(m.x);
+        if (pHere && m.y > pHere.y - 16) {
+          // 收到平台高度了，直接托上岸
+          m.y = lerp(m.y, pHere.y - 4, Math.min(1, dt * 6));
+          if (Math.abs(m.y - (pHere.y - 4)) < 14) { this._rescued(m, pHere); continue; }
+        }
+      }
     }
   };
 
@@ -1253,14 +1277,14 @@
     var ctx = this.ctx;
     ctx.fillStyle = color;
     ctx.beginPath();
-    ctx.moveTo(-100, CFG.GROUND_Y + 40);
+    ctx.moveTo(-100, CFG.WATER_Y + 12);
     var span = 220;
     var start = Math.floor(offset / span) * span - span;
     for (var x = start; x <= start + CFG.W + span * 2; x += span) {
       var sx = x - offset;
-      ctx.moveTo(sx, CFG.GROUND_Y + 40);
-      ctx.quadraticCurveTo(sx + span / 2, baseY - h, sx + span, CFG.GROUND_Y + 40);
-      ctx.lineTo(sx, CFG.GROUND_Y + 40);
+      ctx.moveTo(sx, CFG.WATER_Y + 12);
+      ctx.quadraticCurveTo(sx + span / 2, baseY - h, sx + span, CFG.WATER_Y + 12);
+      ctx.lineTo(sx, CFG.WATER_Y + 12);
     }
     ctx.fill();
   };
@@ -1290,7 +1314,7 @@
   Renderer.prototype._water = function (g, t) {
     var ctx = this.ctx;
     var left = g.camX - 40, right = g.camX + CFG.W + 40;
-    var y = CFG.GROUND_Y + 14;
+    var y = CFG.WATER_Y;   // 水面在画面最底部
     ctx.fillStyle = COL.water;
     ctx.fillRect(left, y, right - left, CFG.H - y + 200);
     ctx.fillStyle = COL.waterDark;
@@ -1320,7 +1344,7 @@
     for (var i = 0; i < g.platforms.length; i++) {
       var p = g.platforms[i];
       if (p.x + p.w < left || p.x > right) continue;
-      var bottom = CFG.H + 240;
+      var bottom = CFG.WATER_Y + 30;   // 柱子插进水里即可，不再直通屏外
       if (p.type === 'spring') {
         // 弹跳蘑菇：红伞白点 + 白杆，一眼"踩我"
         ctx.fillStyle = '#f1e8d8';
@@ -1373,40 +1397,10 @@
         ctx.textAlign = 'center';
         ctx.fillText('浮台', acx, p.y - 18);
       } else if (p.type === 'ice') {
-        ctx.fillStyle = COL.ice;
-        roundRect(ctx, p.x, p.y, p.w, bottom - p.y, 8);
-        ctx.fill();
-        ctx.fillStyle = COL.iceEdge;
-        roundRect(ctx, p.x, p.y, p.w, 10, 6);
-        ctx.fill();
+        this._slabPillars(p, bottom, COL.ice, COL.iceEdge, 12);
       } else {
-        ctx.fillStyle = COL.dirt;
-        roundRect(ctx, p.x, p.y, p.w, bottom - p.y, 10);
-        ctx.fill();
-        // 泥土纹理
-        ctx.fillStyle = COL.dirtDark;
-        for (var k = 0; k < Math.floor(p.w / 26); k++) {
-          var dx = p.x + 12 + k * 26 + ((k % 2) * 7);
-          var dy = p.y + 40 + ((k * 37) % 90);
-          circle(ctx, dx, dy, 4.5);
-        }
-        // 草皮
-        ctx.fillStyle = COL.grass;
-        roundRect(ctx, p.x, p.y - 2, p.w, 18, 9);
-        ctx.fill();
-        ctx.fillStyle = COL.grassLight;
-        roundRect(ctx, p.x + 2, p.y - 2, p.w - 4, 8, 4);
-        ctx.fill();
-        // 草尖
-        ctx.fillStyle = COL.grass;
-        for (var j = 0; j < Math.floor(p.w / 16); j++) {
-          var gx = p.x + 8 + j * 16;
-          ctx.beginPath();
-          ctx.moveTo(gx, p.y);
-          ctx.lineTo(gx + 3, p.y - 9);
-          ctx.lineTo(gx + 6, p.y);
-          ctx.fill();
-        }
+        // 石板 + 柱状支撑：平台是"桥板"，下面留出空间让落水的猴子在柱子间飘荡
+        this._slabPillars(p, bottom, COL.dirt, COL.grass, 22, true);
       }
       // 完美着陆靶圈：平台正中央的浅色圆环，提示"踩这里有连击分"
       if (p.type !== 'start' && p.w >= 60) {
@@ -1422,6 +1416,41 @@
         ctx.stroke();
         ctx.restore();
       }
+    }
+  };
+
+  // 石板平台 + 柱状支撑：板厚 slabH，柱子等分布 2~3 根，插到水里
+  Renderer.prototype._slabPillars = function (p, bottom, col, topCol, slabH, grassTop) {
+    var ctx = this.ctx;
+    var pn = p.w >= 110 ? 3 : 2;
+    ctx.fillStyle = COL.dirtDark;
+    for (var pi = 0; pi < pn; pi++) {
+      var px = p.x + (p.w / pn) * (pi + 0.5) - 9;
+      ctx.fillRect(px, p.y + slabH - 4, 18, bottom - p.y - slabH + 4);
+    }
+    ctx.fillStyle = col;
+    roundRect(ctx, p.x, p.y, p.w, slabH, 8);
+    ctx.fill();
+    if (grassTop) {
+      ctx.fillStyle = COL.grass;
+      roundRect(ctx, p.x, p.y - 2, p.w, 16, 8);
+      ctx.fill();
+      ctx.fillStyle = COL.grassLight;
+      roundRect(ctx, p.x + 2, p.y - 2, p.w - 4, 7, 4);
+      ctx.fill();
+      ctx.fillStyle = COL.grass;
+      for (var j = 0; j < Math.floor(p.w / 16); j++) {
+        var gx = p.x + 8 + j * 16;
+        ctx.beginPath();
+        ctx.moveTo(gx, p.y);
+        ctx.lineTo(gx + 3, p.y - 9);
+        ctx.lineTo(gx + 6, p.y);
+        ctx.fill();
+      }
+    } else {
+      ctx.fillStyle = topCol;
+      roundRect(ctx, p.x, p.y, p.w, 8, 6);
+      ctx.fill();
     }
   };
 
@@ -1922,7 +1951,7 @@
     ctx.save();
     // 采样到"落回平台/水面"为止。用 1/120s 数字积分（和 projectLanding/update 同一套物理），
     // 否则风区里瞄准线会"瞄 A 落 B"；落空时按水面再低 16px 算
-    var missY = CFG.GROUND_Y + 16;
+    var missY = CFG.WATER_Y - 4;
     var targetDrop = m.y - (hit ? landY : missY);
     var sx0 = m.x, sy0 = m.y - 24, svx = vx, svy = vy;
     var pts = [[sx0, sy0]];
