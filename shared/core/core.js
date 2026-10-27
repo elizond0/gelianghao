@@ -18,13 +18,14 @@
   var CFG = {
     W: 375,
     H: 667,
-    GROUND_Y: 470,
+    GROUND_Y: 430,      // 平台基准高度（整体抬高，给下方荡猴留空间）
+    WATER_Y: 630,       // 水面：贴着画面最底部（H=667）
     GRAVITY: 1250,
     MIN_JUMP: 24,
     JUMP_RANGE: 150,      // 满蓄力相对最小跳多飞 150px：要覆盖后期最大 gap(185) - 平台半宽
     MAX_POWER_MS: 1100,   // 蓄力慢一点，落点更好拿捏
     ROPE_REST: 150,
-    PATIENCE: 1.5,
+    PATIENCE: 5.5,      // 落水后挂在绳上能荡/被救的耐心时间（秒）
     CAM_LERP: 0.12,
     // ---- 面包和年糕式丰富（均不增加按键，仍只靠长按跳跃）----
     CP_SPACING: 260,      // 检查点旗间距（世界 px）
@@ -54,7 +55,7 @@
   };
 
   // 版本号：日期 + 当日构建序号，首页展示
-  var VERSION = 'v2026.10.27-r7';
+  var VERSION = 'v2026.10.27-r8';
 
   // 山体主题：由 levelAt() 的档位驱动，渲染层读同一个下标做配色/飘雪
   // （面包和年糕的"山脚 -> 雪线 -> 暴风雪山顶"爬升感）
@@ -457,7 +458,7 @@
       vy += CFG.GRAVITY * dt;
       x += vx * dt;
       y += vy * dt;
-      if (vy > 0 && y >= CFG.GROUND_Y) break;
+      if (vy > 0 && y >= CFG.WATER_Y) break;
     }
     return x;
   };
@@ -513,7 +514,7 @@
         if (m.vy > 0) {
           var hit = this._crossedSurface(prevX, prevY, m.x, m.y);
           if (hit) this._land(m, hit);
-          else if (!this.platformAt(m.x) && m.y > CFG.GROUND_Y + 14) this._wet(m);
+          else if (!this.platformAt(m.x) && m.y > CFG.WATER_Y - 20) this._wet(m);
         }
         // 阵风：只在空中受力（地面无感，落地即安全），方向和强度由地形决定
         if (!m.grounded) {
@@ -738,14 +739,14 @@
   };
 
   Game.prototype._wet = function (m) {
-    m.y = CFG.GROUND_Y + 14;
+    m.y = CFG.WATER_Y - 8;
     m.vx = 0; m.vy = 0;
     m.grounded = false;
     m.wetT = CFG.PATIENCE;
     this.combo = 0;
     m.squash = 0.7;
     this.shake = 0.6;
-    this._burst(m.x, CFG.GROUND_Y + 2, 10, '#7fd4ff');
+    this._burst(m.x, CFG.WATER_Y - 4, 10, '#7fd4ff');
     this.emit('wet', { idx: m.idx });
   };
 
@@ -779,38 +780,61 @@
       }
     }
 
+    // ---- 落水的猴子：单摆物理 ----
+    // A 落水后挂绳吊在伙伴 B 下面：重力把它往下拽，浮力让它半浸水面不沉底，
+    // 绳长约束把位置拉回以 B 为圆心的圆上并消掉径向速度（真单摆特性）。
+    // B 一动（跳/走/收绳），A 就会跟着物理地荡起来。
     for (var i = 0; i < 2; i++) {
       var m = ms[i];
-      if (m.wetT <= 0) continue;
+      if (m.wetT <= 0 || m.wetT >= 100) continue;   // wetT>=100 是测试用的幽灵锚点，不参与物理
       var other = ms[1 - i];
+      var ax = other.x, ay = other.y + 6;   // 锚点：伙伴身上
 
-      if (other.grounded) {
-        // 伙伴站稳在岸上 -> 绳子把落水的这只往回、往上"钓"
-        var k = Math.min(1, dt * 4.5);
-        var pHome = this.platformAt(other.x);
-        var baseY = pHome ? pHome.y : other.y;
-        var inward = other.x > m.x ? -1 : 1;
-        var tx = other.x + inward * Math.min(rest * 0.72, 108);
-        var ty = this._surfaceNear(tx, baseY) - 34;
-        m.x = lerp(m.x, tx, k);
-        m.y = lerp(m.y, ty, k);
+      // 1) 力：重力 + 水面浮力（弹簧式，越深推得越狠）
+      m.vy += CFG.GRAVITY * dt;
+      var buoy = CFG.WATER_Y - 30 - m.y;
+      if (buoy > 0) m.vy -= buoy * 30 * dt;
+      m.vx *= 1 - Math.min(1, 1.1 * dt);    // 水平水阻
 
-        var pHere = this.platformAt(m.x);
-        if (pHere && m.y >= pHere.y - 40) { this._rescued(m, pHere); continue; }
-      } else if (other.y < m.y - 24) {
-        // 伙伴正往前上方跃过 -> 把他带一带
-        m.x = lerp(m.x, other.x - rest * 0.35, Math.min(1, dt * 2.4));
-        m.y = lerp(m.y, other.y, Math.min(1, dt * 1.6));
-        var p2 = this.platformAt(m.x);
-        if (p2 && m.y >= p2.y - 40) { this._rescued(m, p2); continue; }
+      m.x += m.vx * dt;
+      m.y += m.vy * dt;
+
+      // 2) 绳长约束：拉回半径 rest 的圆上，消掉径向外冲速度
+      var dx = m.x - ax, dy = m.y - ay;
+      var dd = Math.sqrt(dx * dx + dy * dy) || 1;
+      if (dd > rest) {
+        var nx = dx / dd, ny = dy / dd;
+        m.x = ax + nx * rest;
+        m.y = ay + ny * rest;
+        var vr = m.vx * nx + m.vy * ny;
+        if (vr > 0) { m.vx -= vr * nx; m.vy -= vr * ny; }
       }
 
-      // 谁也不来救（伙伴也悬着）：不再无限下沉，贴着水面荡 + 慢慢往安全岸飘一点点，
-      // 等 _onBothWet 判定回档/结算。视觉上始终"看得见、够得着"
-      var homeY = CFG.GROUND_Y + 8 + Math.sin(this.time * 2.2 + m.idx * 2.1) * 3.5;
-      m.y = lerp(m.y, homeY, Math.min(1, dt * 6));
-      m.x += Math.sin(this.time * 1.4 + m.idx) * 7 * dt;
-      m.wetT -= 0;   // wetT 由主循环倒计时，这里不额外加
+      // 2.5) 水面钳制：半浸不沉底（绳子把它拽进水里也只没到胸口）
+      if (m.y > CFG.WATER_Y + 26) {
+        m.y = CFG.WATER_Y + 26;
+        if (m.vy > 0) m.vy = 0;
+      }
+
+      // 3) 摆动阻尼：荡几下慢慢稳下来
+      m.vx *= 1 - Math.min(1, 0.5 * dt);
+      m.vy *= 1 - Math.min(1, 0.9 * dt);
+
+      // 4) 伙伴站稳在岸上 -> 慢慢收绳往上钓，够到平台就拉上来
+      if (other.grounded) {
+        var cur = Math.sqrt((m.x - ax) * (m.x - ax) + (m.y - ay) * (m.y - ay)) || 1;
+        var reel = Math.min(1, dt * 1.8);
+        var rx = (m.x - ax) / cur, ry = (m.y - ay) / cur;
+        var target = rest * 0.42;
+        m.x = lerp(m.x, ax + rx * target, reel);
+        m.y = lerp(m.y, ay + ry * target, reel);
+        var pHere = this.platformAt(m.x);
+        if (pHere && m.y > pHere.y - 16) {
+          // 收到平台高度了，直接托上岸
+          m.y = lerp(m.y, pHere.y - 4, Math.min(1, dt * 6));
+          if (Math.abs(m.y - (pHere.y - 4)) < 14) { this._rescued(m, pHere); continue; }
+        }
+      }
     }
   };
 
