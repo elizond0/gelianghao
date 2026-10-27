@@ -87,6 +87,11 @@
         this._tone(392, 0.1, 'triangle', 0.08);
         this._tone(523, 0.18, 'triangle', 0.08, 0.09);
         break;
+      case 'spring':
+        // "boing"：低到高的滑音，像踩上弹簧
+        this._tone(180, 0.22, 'sine', 0.1);
+        this._tone(560, 0.2, 'sine', 0.08, 0.05);
+        break;
       case 'over':
         this._tone(523, 0.16, 'triangle', 0.09);
         this._tone(392, 0.16, 'triangle', 0.09, 0.15);
