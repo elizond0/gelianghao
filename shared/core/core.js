@@ -345,10 +345,11 @@
     }
   };
 
-  Game.prototype.platformAt = function (x) {
+  Game.prototype.platformAt = function (x, tol) {
     var ps = this.platforms;
+    tol = tol || 0;
     for (var i = ps.length - 1; i >= 0; i--) {
-      if (x >= ps[i].x && x <= ps[i].x + ps[i].w) return ps[i];
+      if (x >= ps[i].x - tol && x <= ps[i].x + ps[i].w + tol) return ps[i];
     }
     return null;
   };
@@ -401,7 +402,7 @@
     var m = this.monkeys[this.active];
     if (!m.charging) return;
     m.charging = false;
-    this._launch(m, m.chargeT / (CFG.MAX_POWER_MS / 1000));
+    this._launch(m, this._effPower(m));
     this.lastOpOut = { t: 'up', m: this.active, p: m.power };
     this.emit('jump', { idx: m.idx, power: m.power, from: m.x });
   };
@@ -419,6 +420,14 @@
     this._lastSwitch = this.time;
   };
 
+  // 蓄力有效力度：0->1->0 三角波（满蓄后继续按会往回滚，逼玩家看准时机松手）
+  Game.prototype._effPower = function (m) {
+    var T = CFG.MAX_POWER_MS / 1000;
+    if (!(m.chargeT > 0)) return 0;
+    var u = m.chargeT % (2 * T);
+    return u <= T ? u / T : 2 - u / T;
+  };
+
   Game.prototype.chargeFor = function (dist) {
     return clamp((dist - CFG.MIN_JUMP) / CFG.JUMP_RANGE, 0, 1) * CFG.MAX_POWER_MS / 1000;
   };
@@ -429,19 +438,20 @@
   var DRAG = 0.25;
 
   // 阵风系数 0..1：刮 tOn 秒、停 tOff 秒，起/停各有 GUST_RAMP 渐变（呼吸式，不是电闸）
-  Game.prototype._gustAt = function (w) {
+  Game.prototype._gustAt = function (w, now) {
     var on = w.tOn || 6, off = w.tOff || 3, ramp = CFG.GUST_RAMP;
-    var u = (this.time + (w.ph || 0)) % (on + off);
+    var t = (now == null ? this.time : now);
+    var u = (t + (w.ph || 0)) % (on + off);
     if (u < on) return Math.max(0, Math.min(1, u / ramp, (on - u) / ramp));
     return 0;
   };
 
   // x 处的风力（不在任何风区返回 0；风区内乘阵风系数）。
   // 地形生成、主循环、落点预测共用，保证瞄准线不骗人
-  Game.prototype._windAt = function (x) {
+  Game.prototype._windAt = function (x, now) {
     for (var i = 0; i < this.winds.length; i++) {
       var w = this.winds[i];
-      if (x >= w.x0 && x <= w.x1) return w.fx * this._gustAt(w);
+      if (x >= w.x0 && x <= w.x1) return w.fx * this._gustAt(w, now);
     }
     return 0;
   };
@@ -453,8 +463,9 @@
     var vx = dist * CFG.JUMP_VX, vy = -dist * CFG.JUMP_VY;
     var x = fromX, y = fromY || CFG.GROUND_Y;
     var dt = 1 / 120;
+    var t0 = this.time;
     for (var i = 0; i < 900; i++) {
-      vx += this._windAt(x) * dt;
+      vx += this._windAt(x, t0 + i * dt) * dt;   // 风随飞行时间演进，预测才和实际一致
       vx *= (1 - DRAG * dt);
       vy += CFG.GRAVITY * dt;
       x += vx * dt;
@@ -467,7 +478,7 @@
   Game.prototype.chargeRatio = function () {
     var m = this.monkeys[this.active];
     if (!m || !m.charging) return 0;
-    return clamp(m.chargeT / (CFG.MAX_POWER_MS / 1000), 0, 1);
+    return clamp(this._effPower(m), 0, 1);
   };
 
   // ---------- 主循环 ----------
@@ -492,19 +503,24 @@
     for (var mi = 0; mi < 2; mi++) {
       var mm = ms[mi];
       if (!mm.grounded || mm.wetT > 0) continue;
-      var stand = this.platformAt(mm.x);
+      var stand = this.platformAt(mm.x, 7);
       if (stand && stand.type === 'float' && stand._dx) mm.x += stand._dx;
       // 站着的台子被移走了/不在脚下 → 开始下坠（覆盖所有平台的兜底）
-      var under = this.platformAt(mm.x);
+      var under = this.platformAt(mm.x, 7);
       if (!under) { mm.grounded = false; }
       else if (Math.abs(mm.y - under.y) > 0.5) mm.y = under.y;
     }
 
     for (var i = 0; i < 2; i++) {
       var m = ms[i];
-      if (m.charging) { m.chargeT += dt; m.squash = 1 - clamp(m.chargeT / 0.9, 0, 1) * 0.24; }
+      if (m.charging) { m.chargeT += dt; m.squash = 1 - this._effPower(m) * 0.24; }
       if (m.stunT > 0) m.stunT -= dt;
-      if (m.wetT > 0) m.wetT -= dt;
+      if (m.wetT > 0) {
+        m.wetT -= dt;
+        // 耐心耗尽还没被救上来 -> 别让它掉出世界（绳子拉长/猴子消失的 bug），
+        // 按"连掉"判定回检查点或结算
+        if (m.wetT <= 0 && !m.grounded) this._onWetExpired(m);
+      }
       m.blink += dt;
 
       if (!m.grounded && m.wetT <= 0) {
@@ -578,7 +594,8 @@
       var p = this.platforms[i];
       if (y0 <= p.y + 1.5 && y1 >= p.y) {
         var xa = Math.min(x0, x1), xb = Math.max(x0, x1);
-        if (xb >= p.x && xa <= p.x + p.w) return p;
+        // 边缘容差 7px：猴子中心略出平台边缘（半个身子在外）也算踩到
+        if (xb >= p.x - 7 && xa <= p.x + p.w + 7) return p;
       }
     }
     return null;
@@ -668,7 +685,7 @@
     var aimRight = hi;
     var acting = ms[this.active];
     if (acting && acting.charging) {
-      var pw = clamp(acting.chargeT / (CFG.MAX_POWER_MS / 1000), 0, 1);
+      var pw = clamp(this._effPower(acting), 0, 1);
       var reach = this.projectLanding(acting.x, pw, acting.y) + 40;
       if (reach > aimRight) aimRight = reach;
     }
@@ -749,7 +766,7 @@
     m.squash = 0.7;
     this.shake = 0.6;
     this._burst(m.x, CFG.WATER_Y - 4, 10, '#7fd4ff');
-    this.emit('wet', { idx: m.idx });
+    this.emit('wet', { idx: m.idx, x: m.x });
   };
 
   // ---------- 绳子：哥俩好的灵魂 ----------
@@ -939,6 +956,18 @@
    *  - 还没走到任何一个检查点就双落 -> 直接结算（开局不给兜底）
    *  - 同一检查点连摔 3 次 -> 判定卡关，结算（防止被地形焊死）
    */
+  /** 单只湿猴耐心耗尽：救援失败，按连掉处理（回检查点或结算），不再无声下坠 */
+  Game.prototype._onWetExpired = function (m) {
+    if (this.state !== 'playing') return;
+    this._float(m.x, CFG.WATER_Y - 64, '没抓稳…', '#e8590c');
+    var cp = this.checkpoints[this._lastCPIdx];
+    if (cp && cp.passed && this.fallsSinceCP < CFG.MAX_FALLS_PER_CP) {
+      this._respawnAt(cp);
+    } else {
+      this._gameOver(this.fallsSinceCP >= CFG.MAX_FALLS_PER_CP ? 'stuck' : 'wet-out');
+    }
+  };
+
   Game.prototype._onBothWet = function () {
     if (this.state !== 'playing') return;
     var cp = this.checkpoints[this._lastCPIdx];
@@ -1042,7 +1071,7 @@
       if (m.grounded && m.stunT <= 0 && !m.charging) { m.charging = true; m.chargeT = 0; }
     } else if (api.t === 'up' && m.charging) {
       m.charging = false;
-      var ratio = m.chargeT / (CFG.MAX_POWER_MS / 1000);
+      var ratio = this._effPower(m);
       if (typeof api.p === 'number') ratio = api.p;
       this._launch(m, ratio);
       this.emit('jump', { idx: m.idx, power: m.power, from: m.x, remote: true });
