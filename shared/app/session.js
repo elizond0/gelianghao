@@ -185,13 +185,17 @@
     // gameover 的音效键叫 'over'，其余事件名与音效键一致
     this._sfx(type === 'gameover' ? 'over' : type);
     if (type === 'coin' || type === 'rescue' || type === 'hit' ||
-        type === 'perfect' || type === 'gold' || type === 'checkpoint') {
+        type === 'perfect' || type === 'gold' || type === 'checkpoint' ||
+        type === 'spring') {
       this._vibrate('light');
     }
     if (type === 'gameover') {
       this._vibrate('heavy');
       this._onOver(d);
       return;
+    }
+    if (type === 'spring' && this.ui.onToast) {
+      this.ui.onToast('弹！蘑菇送你一程', 1300);
     }
     if (type === 'checkpoint' && this.ui.onToast) {
       this.ui.onToast('到达存档点！掉下去也能从这儿接着来', 1500);
@@ -214,6 +218,7 @@
       rescue: rescues,
       falls: (d && d.falls) || 0,
       bestCombo: (d && d.bestCombo) || 0,
+      time: (d && d.time) || 0,
       perfects: (d && d.perfects) || 0,
       golds: (d && d.golds) || 0
     });
