@@ -1040,7 +1040,10 @@
     // 采样到"落回平台/水面"为止。用 1/120s 数字积分（和 projectLanding/update 同一套物理），
     // 否则风区里瞄准线会"瞄 A 落 B"；落空时按水面再低 16px 算
     var missY = CFG.WATER_Y - 4;
-    var targetDrop = m.y - (hit ? landY : missY);
+    // 截止条件：下落段一碰到"落点高度"（平台面或水面）就停。
+    // 旧写法 sy0-(m.y-24)>=targetDrop 展开后是 2*m.y-24-landY，
+    // 落点比起跳点低得多（水面/低台）时线会在半空被截断——"虚线时常不显示"的根因
+    var stopY = hit ? landY : missY;
     var sx0 = m.x, sy0 = m.y - 24, svx = vx, svy = vy;
     var pts = [[sx0, sy0]];
     var sdt = 1 / 120;
@@ -1051,7 +1054,7 @@
       sx0 += svx * sdt;
       sy0 += svy * sdt;
       pts.push([sx0, sy0]);
-      if (svy > 0 && sy0 - (m.y - 24) >= targetDrop) break;
+      if (svy > 0 && sy0 >= stopY) break;
     }
     function strokePath(color, w) {
       ctx.strokeStyle = color;
@@ -1083,7 +1086,10 @@
       ctx.font = 'bold 12px sans-serif';
       ctx.textAlign = 'center';
       ctx.fillStyle = 'rgba(0,0,0,0.45)';
-      var tip = '再按久一点';
+      // 蓄力是三角波（满蓄后回滚），"按久一点"在回滚下降段是错误指导——
+      // 这时该松手重按，别让玩家越按越近
+      var T = CFG.MAX_POWER_MS / 1000;
+      var tip = (m.chargeT % (2 * T)) > T ? '蓄过头了，松手重来' : '再按久一点';
       var tw = ctx.measureText(tip).width;
       roundRect(ctx, target - tw / 2 - 7, landY - 34, tw + 14, 18, 9);
       ctx.fill();
