@@ -288,6 +288,9 @@
       if (li >= 2 && p.type === 'normal' && r() < CFG.SPRING_CHANCE && pw >= 64) {
         p.type = 'spring';
         isSpring = true;
+        // 蘑菇垫只占平台中段（30%~70%）：垫外是普通石板，玩家可以主动避开或利用
+        p.pad0 = Math.round(p.x + p.w * 0.30);
+        p.pad1 = Math.round(p.x + p.w * 0.70);
       }
 
       // 阵风区（进山后）：挂在坑位上空，空中被水平吹；带风牌提示
@@ -739,16 +742,50 @@
     return land >= q.x - 4;
   };
 
+  // 是否踩中蘑菇垫（老存档/测试造的 spring 平台没有 pad 字段时按整台算，向后兼容）
+  Game.prototype._onSpringPad = function (x, plat) {
+    if (plat.pad0 === undefined) return true;
+    return x >= plat.pad0 && x <= plat.pad1;
+  };
+
+  // 弹跳力度自适应：在 0.3~1 之间找"落点最接近下一块平台中心"的力度。
+  // 积分物理与 update()/projectLanding() 一致（重力 + 水平空气阻尼 + 阵风）。
+  Game.prototype._springPower = function (fromX, plat) {
+    var edge = plat.x + plat.w;
+    var next = this.nextPlatform(edge);
+    if (!next) return CFG.SPRING_POWER;              // 没有下一块（不该发生）→ 原满力
+    var target = next.x + next.w / 2;
+    var landY = next.y;
+    var best = CFG.SPRING_POWER, bestErr = 1e9;
+    for (var p = 0.3; p <= 1.001; p += 0.02) {
+      var dist = CFG.MIN_JUMP + p * CFG.JUMP_RANGE;
+      var vx = dist * CFG.JUMP_VX, vy = -dist * CFG.JUMP_VY;
+      var x = fromX, y = plat.y, dt = 1 / 120, i = 0;
+      for (; i < 900; i++) {
+        vx += this._windAt(x, this.time + i * dt) * dt;
+        vx *= (1 - 0.25 * dt);
+        vy += CFG.GRAVITY * dt;
+        x += vx * dt;
+        y += vy * dt;
+        if (vy > 0 && y >= landY) break;
+      }
+      var err = Math.abs(x - target);
+      if (err < bestErr) { bestErr = err; best = Math.min(1, p); }
+    }
+    return best;
+  };
+
   Game.prototype._land = function (m, plat) {
     m.y = plat.y;
     m.vy = 0;
     m.vx = 0;
     m.grounded = true;
     m.squash = 1.18;
-    // 弹跳蘑菇：踩上去自动弹起（≈满蓄力），连击不清零也不算完美——
-    // 它是"路线奖励"不是"技术判定"，跳上去该去哪由玩家下次蓄力决定
-    if (plat.type === 'spring' && m.vy >= 0) {
-      var sd = CFG.MIN_JUMP + CFG.JUMP_RANGE * CFG.SPRING_POWER;
+    // 弹跳蘑菇：只踩中平台中段的"蘑菇垫"才弹（垫外=普通着陆，可以主动避开），
+    // 弹跳力度自适应——自动取"正好落到下一块平台中心"的力度，
+    // 保证"踩垫=前进一格"，不再出现固定满力越过近台掉水的陷阱（r13 实机反馈）
+    if (plat.type === 'spring' && m.vy >= 0 && this._onSpringPad(m.x, plat)) {
+      var sd = CFG.MIN_JUMP + CFG.JUMP_RANGE * this._springPower(m.x, plat);
       m.vx = sd * CFG.JUMP_VX;
       m.vy = -sd * CFG.JUMP_VY;
       m.grounded = false;
