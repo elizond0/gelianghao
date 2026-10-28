@@ -150,6 +150,7 @@
     this.blink = Math.random() * 3;
     this.coyoteT = 0;         // 土狼时间剩余
     this.jumpBufT = 0;        // 跳跃缓冲剩余
+    this.rescueGuard = 0;     // r16c：被救上岸后的落地保护（期间按下不起飞，防"钓上来就飞出去"循环）
   }
 
   function Game(opts) {
@@ -435,6 +436,7 @@
     if (!this.canIOperate()) return;
     var m = this.monkeys[this.active];
     if (m.stunT > 0 || m.wetT > 0) return;
+    if (m.rescueGuard > 0) return;   // r16c：被救上岸的短暂保护，必须松手重按才起飞
     if (!m.grounded) return;   // r14：按下只在地面生效（起跳即飞），空中无蓄力/缓冲
     // 原版手感：按下立刻起跳，按住持续上升（飞行），松手快速下落
     m.charging = true;
@@ -575,6 +577,7 @@
         if (m.autoFly > 0 && m.chargeT >= m.autoFly) { m.charging = false; m.autoFly = 0; }
       }
       if (m.stunT > 0) m.stunT -= dt;
+      if (m.rescueGuard > 0) m.rescueGuard -= dt;
       if (m.coyoteT > 0) m.coyoteT -= dt;
       if (m.jumpBufT > 0) m.jumpBufT -= dt;
       if (m.wetT > 0) {
@@ -1022,6 +1025,20 @@
     m.grounded = true;
     m.wetT = 0;
     m.squash = 1.28;
+    m.charging = false;
+    m.rescueGuard = 0.8;   // r16c：钓上来先站稳 0.8s，手指还按着也不会立刻飞出去
+    // r16c 实机：强吸附把猴拉到锚点（伙伴正身上）导致两猴完全重叠、"猴消失+绳不见"。
+    // 放到伙伴另一侧的空位上（台内 clamp，窄台兜底）
+    var partner = this.monkeys[1 - m.idx];
+    var side = partner.x <= p.x + p.w / 2 ? 1 : -1;
+    m.x = clamp(partner.x + side * 56, p.x + 14, p.x + p.w - 14);
+    if (Math.abs(m.x - partner.x) < 30) m.x = clamp(partner.x - side * 40, p.x + 14, p.x + p.w - 14);
+    // 单人模式：玩家还按着屏（钓猴姿势）则强制松手，防止落地立即起飞
+    if (!this.netMode) {
+      for (var pi = 0; pi < 2; pi++) {
+        if (this.monkeys[pi].charging) { this.monkeys[pi].charging = false; this.emit('jumpEnd', { idx: pi }); }
+      }
+    }
     if (m.progressX < m.x) m.progressX = m.x;
     this.rescues++;
     this._float(m.x, p.y - 78, '哥俩好！+30', '#2f9e44');
