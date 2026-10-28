@@ -999,14 +999,18 @@
         var cur = Math.sqrt((m.x - ax) * (m.x - ax) + (m.y - ay) * (m.y - ay)) || 1;
         var reel = Math.min(1, dt * 1.8);
         var rx = (m.x - ax) / cur, ry = (m.y - ay) / cur;
-        var target = rest * 0.42;
+        var target = 12;   // r16b 实机：0.42*rest 会吊在平台下方柱子间永远上不来，直接收到锚点（站台猴身上），够到台面即托岸
         m.x = lerp(m.x, ax + rx * target, reel);
         m.y = lerp(m.y, ay + ry * target, reel);
         var pHere = this.platformAt(m.x);
-        if (pHere && m.y > pHere.y - 16) {
-          // 收到平台高度了，直接托上岸
-          m.y = lerp(m.y, pHere.y - 4, Math.min(1, dt * 6));
-          if (Math.abs(m.y - (pHere.y - 4)) < 14) { this._rescued(m, pHere); continue; }
+        if (pHere) {
+          // r16b 实机：单摆重力/浮力震荡（±50px）会淹没收绳 lerp，猴永远到不了台面。
+          // 锚点上方有台时直接强吸附托岸（每帧清震荡速度），走到台高即上岸
+          var topY = pHere.y - 4;
+          m.vx = 0; m.vy = 0;
+          m.y = lerp(m.y, topY, Math.min(1, dt * 4));
+          m.x = lerp(m.x, ax, Math.min(1, dt * 4));
+          if (Math.abs(m.y - topY) < 10) { this._rescued(m, pHere); continue; }
         }
       }
     }
@@ -1139,7 +1143,7 @@
     var hi = p ? p.x + p.w - 12 : cp.x + 70;
     for (var i = 0; i < 2; i++) {
       var m = ms[i];
-      m.x = clamp(cp.x + (i === 0 ? -36 : 36), Math.min(lo, hi), Math.max(lo, hi));
+      m.x = clamp(cp.x + (i === 0 ? -50 : 50), Math.min(lo, hi), Math.max(lo, hi));   // r16b: ±36 太近肩并肩
       m.y = y;
       m.vx = 0; m.vy = 0;
       m.grounded = true;
@@ -1151,6 +1155,10 @@
     this.fallsSinceCP++;
     this.combo = 0;
     this._bothWetT = 0;
+    // r16b 实机：掉回检查点落点旁边常驻食人鱼/尖刺，落地秒扣血循环——清掉落点附近的障碍
+    for (var oi = 0; oi < this.obstacles.length; oi++) {
+      if (Math.abs(this.obstacles[oi].x - cp.x) < 90) this.obstacles[oi].dead = true;
+    }
     // 联机时把操作权还给本端 seat（主机权威，客人跟快照）；单人给落后的那只
     this.active = this.netMode ? this.seat : (ms[0].progressX <= ms[1].progressX ? 0 : 1);
     this._lastSwitch = this.time;
