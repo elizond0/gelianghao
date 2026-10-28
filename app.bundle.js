@@ -1,6 +1,6 @@
 /* eslint-disable */
 /* 哥俩好 · 网页端单文件打包产物 —— 由 scripts/build-web-bundle.js 自动生成，请勿手改 */
-/* 生成时间：2026-10-28T07:53:53.686Z */
+/* 生成时间：2026-10-28T08:14:43.728Z */
 (function () {
   'use strict';
   var __mods = {};
@@ -311,6 +311,9 @@
       if (li >= 2 && p.type === 'normal' && r() < CFG.SPRING_CHANCE && pw >= 64) {
         p.type = 'spring';
         isSpring = true;
+        // 蘑菇垫只占平台中段（30%~70%）：垫外是普通石板，玩家可以主动避开或利用
+        p.pad0 = Math.round(p.x + p.w * 0.30);
+        p.pad1 = Math.round(p.x + p.w * 0.70);
       }
 
       // 阵风区（进山后）：挂在坑位上空，空中被水平吹；带风牌提示
@@ -762,16 +765,50 @@
     return land >= q.x - 4;
   };
 
+  // 是否踩中蘑菇垫（老存档/测试造的 spring 平台没有 pad 字段时按整台算，向后兼容）
+  Game.prototype._onSpringPad = function (x, plat) {
+    if (plat.pad0 === undefined) return true;
+    return x >= plat.pad0 && x <= plat.pad1;
+  };
+
+  // 弹跳力度自适应：在 0.3~1 之间找"落点最接近下一块平台中心"的力度。
+  // 积分物理与 update()/projectLanding() 一致（重力 + 水平空气阻尼 + 阵风）。
+  Game.prototype._springPower = function (fromX, plat) {
+    var edge = plat.x + plat.w;
+    var next = this.nextPlatform(edge);
+    if (!next) return CFG.SPRING_POWER;              // 没有下一块（不该发生）→ 原满力
+    var target = next.x + next.w / 2;
+    var landY = next.y;
+    var best = CFG.SPRING_POWER, bestErr = 1e9;
+    for (var p = 0.3; p <= 1.001; p += 0.02) {
+      var dist = CFG.MIN_JUMP + p * CFG.JUMP_RANGE;
+      var vx = dist * CFG.JUMP_VX, vy = -dist * CFG.JUMP_VY;
+      var x = fromX, y = plat.y, dt = 1 / 120, i = 0;
+      for (; i < 900; i++) {
+        vx += this._windAt(x, this.time + i * dt) * dt;
+        vx *= (1 - 0.25 * dt);
+        vy += CFG.GRAVITY * dt;
+        x += vx * dt;
+        y += vy * dt;
+        if (vy > 0 && y >= landY) break;
+      }
+      var err = Math.abs(x - target);
+      if (err < bestErr) { bestErr = err; best = Math.min(1, p); }
+    }
+    return best;
+  };
+
   Game.prototype._land = function (m, plat) {
     m.y = plat.y;
     m.vy = 0;
     m.vx = 0;
     m.grounded = true;
     m.squash = 1.18;
-    // 弹跳蘑菇：踩上去自动弹起（≈满蓄力），连击不清零也不算完美——
-    // 它是"路线奖励"不是"技术判定"，跳上去该去哪由玩家下次蓄力决定
-    if (plat.type === 'spring' && m.vy >= 0) {
-      var sd = CFG.MIN_JUMP + CFG.JUMP_RANGE * CFG.SPRING_POWER;
+    // 弹跳蘑菇：只踩中平台中段的"蘑菇垫"才弹（垫外=普通着陆，可以主动避开），
+    // 弹跳力度自适应——自动取"正好落到下一块平台中心"的力度，
+    // 保证"踩垫=前进一格"，不再出现固定满力越过近台掉水的陷阱（r13 实机反馈）
+    if (plat.type === 'spring' && m.vy >= 0 && this._onSpringPad(m.x, plat)) {
+      var sd = CFG.MIN_JUMP + CFG.JUMP_RANGE * this._springPower(m.x, plat);
       m.vx = sd * CFG.JUMP_VX;
       m.vy = -sd * CFG.JUMP_VY;
       m.grounded = false;
@@ -1463,29 +1500,35 @@
       if (p.x + p.w < left || p.x > right) continue;
       var bottom = CFG.WATER_Y + 30;   // 柱子插进水里即可，不再直通屏外
       if (p.type === 'spring') {
-        // 弹跳蘑菇：红伞白点 + 白杆，一眼"踩我"
+        // r13：蘑菇台 = 石板桥 + 中段蘑菇垫（pad0~pad1）。
+        // 垫外是普通石板可正常着陆（可以主动避开蘑菇），
+        // 蘑菇伞只罩住垫区，白杆立在平台中线，一眼分清"哪段能踩哪段别踩"
+        this._slabPillars(p, bottom, COL.dirt, COL.grass, 22, true);
+        var padL = p.pad0 === undefined ? p.x + p.w * 0.30 : p.pad0;
+        var padR = p.pad1 === undefined ? p.x + p.w * 0.70 : p.pad1;
+        var pcx = (padL + padR) / 2;
         ctx.fillStyle = '#f1e8d8';
-        ctx.fillRect(p.x + p.w / 2 - 7, p.y - 12, 14, bottom - p.y);
+        ctx.fillRect(pcx - 7, p.y - 12, 14, bottom - p.y);
         ctx.fillStyle = '#e0524d';
         ctx.beginPath();
-        ctx.moveTo(p.x + 2, p.y);
-        ctx.quadraticCurveTo(p.x + p.w / 2, p.y - 26, p.x + p.w - 2, p.y);
+        ctx.moveTo(padL + 2, p.y);
+        ctx.quadraticCurveTo(pcx, p.y - 26, padR - 2, p.y);
         ctx.closePath();
         ctx.fill();
         ctx.fillStyle = '#ffffff';
-        circle(ctx, p.x + p.w * 0.32, p.y - 10, 3.4);
+        circle(ctx, padL + (padR - padL) * 0.22, p.y - 10, 3.4);
         ctx.fill();
-        circle(ctx, p.x + p.w * 0.62, p.y - 14, 2.6);
+        circle(ctx, padL + (padR - padL) * 0.72, p.y - 14, 2.6);
         ctx.fill();
-        circle(ctx, p.x + p.w * 0.5, p.y - 5, 2.2);
+        circle(ctx, pcx, p.y - 5, 2.2);
         ctx.fill();
         // 弹跳预兆：伞面呼吸
         ctx.globalAlpha = 0.35 + 0.2 * Math.sin(t * 5 + p.x);
         ctx.strokeStyle = '#ffd8d6';
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.moveTo(p.x + 2, p.y);
-        ctx.quadraticCurveTo(p.x + p.w / 2, p.y - 26, p.x + p.w - 2, p.y);
+        ctx.moveTo(padL + 2, p.y);
+        ctx.quadraticCurveTo(pcx, p.y - 26, padR - 2, p.y);
         ctx.stroke();
         ctx.globalAlpha = 1;
       } else if (p.type === 'float') {
@@ -1551,8 +1594,16 @@
       var p = g.platforms[i];
       if (p.x + p.w < left || p.x > right) continue;
       if (p.type === 'spring') {
+        var slabH2 = 22;
+        ctx.fillStyle = COL.dirtDark;
+        var pn2 = p.w >= 110 ? 3 : 2;
+        for (var pi2 = 0; pi2 < pn2; pi2++) {
+          var px2 = p.x + (p.w / pn2) * (pi2 + 0.5) - 9;
+          ctx.fillRect(px2, p.y + slabH2 - 4, 18, bottom - p.y - slabH2 + 4);
+        }
+        var pcx2 = (p.pad0 === undefined ? p.x + p.w * 0.30 : p.pad0) + ((p.pad1 === undefined ? p.x + p.w * 0.70 : p.pad1) - (p.pad0 === undefined ? p.x + p.w * 0.30 : p.pad0)) / 2;
         ctx.fillStyle = '#f1e8d8';
-        ctx.fillRect(p.x + p.w / 2 - 7, p.y - 12, 14, bottom - p.y);
+        ctx.fillRect(pcx2 - 7, p.y - 12, 14, bottom - p.y);
       } else if (p.type === 'float') {
         continue;   // 浮台悬空没有柱子
       } else {
