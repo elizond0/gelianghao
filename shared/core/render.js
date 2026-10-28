@@ -265,29 +265,35 @@
       if (p.x + p.w < left || p.x > right) continue;
       var bottom = CFG.WATER_Y + 30;   // 柱子插进水里即可，不再直通屏外
       if (p.type === 'spring') {
-        // 弹跳蘑菇：红伞白点 + 白杆，一眼"踩我"
+        // r13：蘑菇台 = 石板桥 + 中段蘑菇垫（pad0~pad1）。
+        // 垫外是普通石板可正常着陆（可以主动避开蘑菇），
+        // 蘑菇伞只罩住垫区，白杆立在平台中线，一眼分清"哪段能踩哪段别踩"
+        this._slabPillars(p, bottom, COL.dirt, COL.grass, 22, true);
+        var padL = p.pad0 === undefined ? p.x + p.w * 0.30 : p.pad0;
+        var padR = p.pad1 === undefined ? p.x + p.w * 0.70 : p.pad1;
+        var pcx = (padL + padR) / 2;
         ctx.fillStyle = '#f1e8d8';
-        ctx.fillRect(p.x + p.w / 2 - 7, p.y - 12, 14, bottom - p.y);
+        ctx.fillRect(pcx - 7, p.y - 12, 14, bottom - p.y);
         ctx.fillStyle = '#e0524d';
         ctx.beginPath();
-        ctx.moveTo(p.x + 2, p.y);
-        ctx.quadraticCurveTo(p.x + p.w / 2, p.y - 26, p.x + p.w - 2, p.y);
+        ctx.moveTo(padL + 2, p.y);
+        ctx.quadraticCurveTo(pcx, p.y - 26, padR - 2, p.y);
         ctx.closePath();
         ctx.fill();
         ctx.fillStyle = '#ffffff';
-        circle(ctx, p.x + p.w * 0.32, p.y - 10, 3.4);
+        circle(ctx, padL + (padR - padL) * 0.22, p.y - 10, 3.4);
         ctx.fill();
-        circle(ctx, p.x + p.w * 0.62, p.y - 14, 2.6);
+        circle(ctx, padL + (padR - padL) * 0.72, p.y - 14, 2.6);
         ctx.fill();
-        circle(ctx, p.x + p.w * 0.5, p.y - 5, 2.2);
+        circle(ctx, pcx, p.y - 5, 2.2);
         ctx.fill();
         // 弹跳预兆：伞面呼吸
         ctx.globalAlpha = 0.35 + 0.2 * Math.sin(t * 5 + p.x);
         ctx.strokeStyle = '#ffd8d6';
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.moveTo(p.x + 2, p.y);
-        ctx.quadraticCurveTo(p.x + p.w / 2, p.y - 26, p.x + p.w - 2, p.y);
+        ctx.moveTo(padL + 2, p.y);
+        ctx.quadraticCurveTo(pcx, p.y - 26, padR - 2, p.y);
         ctx.stroke();
         ctx.globalAlpha = 1;
       } else if (p.type === 'float') {
@@ -353,8 +359,16 @@
       var p = g.platforms[i];
       if (p.x + p.w < left || p.x > right) continue;
       if (p.type === 'spring') {
+        var slabH2 = 22;
+        ctx.fillStyle = COL.dirtDark;
+        var pn2 = p.w >= 110 ? 3 : 2;
+        for (var pi2 = 0; pi2 < pn2; pi2++) {
+          var px2 = p.x + (p.w / pn2) * (pi2 + 0.5) - 9;
+          ctx.fillRect(px2, p.y + slabH2 - 4, 18, bottom - p.y - slabH2 + 4);
+        }
+        var pcx2 = (p.pad0 === undefined ? p.x + p.w * 0.30 : p.pad0) + ((p.pad1 === undefined ? p.x + p.w * 0.70 : p.pad1) - (p.pad0 === undefined ? p.x + p.w * 0.30 : p.pad0)) / 2;
         ctx.fillStyle = '#f1e8d8';
-        ctx.fillRect(p.x + p.w / 2 - 7, p.y - 12, 14, bottom - p.y);
+        ctx.fillRect(pcx2 - 7, p.y - 12, 14, bottom - p.y);
       } else if (p.type === 'float') {
         continue;   // 浮台悬空没有柱子
       } else {
