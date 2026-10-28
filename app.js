@@ -125,8 +125,12 @@
     $('btnQuit').classList.add('show');   // 进游戏才显示退出按钮
   }
 
-  var toastTimer = null;
+  var toastTimer = null, lastToastMsg = '', lastToastAt = 0;
   function toast(msg, ms) {
+    // r15 实机反馈：连续事件（回检查点循环）同文案 toast 反复弹，3s 内去重
+    var now = Date.now();
+    if (msg === lastToastMsg && now - lastToastAt < 3000) return;
+    lastToastMsg = msg; lastToastAt = now;
     var el = $('toast');
     el.textContent = msg;
     el.classList.add('show');
