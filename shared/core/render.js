@@ -775,8 +775,8 @@
   Renderer.prototype._rope = function (g, t) {
     var ctx = this.ctx;
     var a = g.monkeys[0], b = g.monkeys[1];
-    var ax = a.x, ay = a.y - 26, bx = b.x, by = b.y - 26;
-    var N = 8;
+    var ax = a.x, ay = a.y + 8, bx = b.x, by = b.y + 8;   // r16b: 连在腰后，松弛绳不再绕过头顶堆圈
+    var N = 8;   // r16b 修复：锚点替换时误删了这行，导致线上每帧 N is not defined
     if (!this._ropePts || this._ropePts.length !== N + 1) {
       this._ropePts = [];
       for (var i0 = 0; i0 <= N; i0++) {
@@ -869,6 +869,9 @@
     ctx.fill();
     ctx.font = 'bold 10px sans-serif';
     ctx.textAlign = 'center';
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(60,40,20,0.55)';   // r16b: 白字压白云看不清，加深色描边
+    ctx.strokeText('第 ' + lv + ' 关 · ' + dist + 'm', CFG.W / 2, by + bh + 17);
     ctx.fillStyle = '#ffffff';
     ctx.fillText('第 ' + lv + ' 关 · ' + dist + 'm', CFG.W / 2, by + bh + 17);
     ctx.restore();
