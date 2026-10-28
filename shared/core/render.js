@@ -277,9 +277,19 @@
         ctx.fillStyle = '#e0524d';
         ctx.beginPath();
         ctx.moveTo(padL + 2, p.y);
-        ctx.quadraticCurveTo(pcx, p.y - 26, padR - 2, p.y);
+        ctx.quadraticCurveTo(pcx, p.y - 34, padR - 2, p.y);
         ctx.closePath();
         ctx.fill();
+        ctx.strokeStyle = '#b03a36';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        // 伞面白色描边高光，草地上也醒目
+        ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(padL + 4, p.y - 2);
+        ctx.quadraticCurveTo(pcx, p.y - 32, padR - 4, p.y - 2);
+        ctx.stroke();
         ctx.fillStyle = '#ffffff';
         circle(ctx, padL + (padR - padL) * 0.22, p.y - 10, 3.4);
         ctx.fill();
@@ -293,7 +303,7 @@
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.moveTo(padL + 2, p.y);
-        ctx.quadraticCurveTo(pcx, p.y - 26, padR - 2, p.y);
+        ctx.quadraticCurveTo(pcx, p.y - 34, padR - 2, p.y);
         ctx.stroke();
         ctx.globalAlpha = 1;
       } else if (p.type === 'float') {
