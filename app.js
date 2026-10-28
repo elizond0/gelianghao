@@ -871,12 +871,11 @@
     startSolo: startSoloGame,
     pressStart: function () { if (game) game.pressStart(); },
     pressEnd: function () { if (game) game.pressEnd(); },
-    jump: function (dist) {
+    jump: function (holdSec) {
       if (!game || game.state !== 'playing') return;
-      game.pressStart();
+      game.pressStart();                            // 起飞
       var m = game.monkeys[game.active];
-      m.chargeT = game.chargeFor(dist);
-      game.pressEnd();
+      if (m) m.autoFly = game.chargeFor(holdSec);   // 自动按住这么久后松手
     }
   };
 
