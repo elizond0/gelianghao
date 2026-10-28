@@ -341,7 +341,8 @@
         this._lastWindX = p.x;
       }
 
-      if (!isSpring && r() < L.obs && pw > 86) {
+      var staticPlat = p.type === 'normal' || p.type === 'ice';   // 浮台会巡逻移走、乌龟浮在水面，都不刷障碍（会悬空）
+      if (staticPlat && !isSpring && r() < L.obs && pw > 86) {
         this.obstacles.push({
           kind: r() < 0.55 ? 'bear' : 'piranha',
           x: Math.round(p.x + pw * (0.4 + r() * 0.25)),
@@ -350,7 +351,7 @@
       }
       // 尖刺只占平台外侧 28%（右缘朝坑方向）：落中间就绝对安全，看见尖刺就往中间瞄。
       // 旧版放在 0.55 处（平台中部），跟"完美着陆圈"抢地盘又躲不开，纯坑
-      if (!isSpring && L.spike && r() < 0.24 && pw > 88) {
+      if (staticPlat && !isSpring && L.spike && r() < 0.24 && pw > 88) {
         this.obstacles.push({ kind: 'spike', x: Math.round(p.x + pw * (CFG.SPIKE_EDGE + r() * 0.16)), y: y, w: 22, h: 12, dead: false });
       }
       if (r() < 0.7 && pw > 84) this.pickups.push({ x: Math.round(p.x + pw * 0.5), y: y - 48, taken: false, t: r() * 6 });
@@ -769,15 +770,20 @@
       if (reach > aimRight) aimRight = reach;
     }
 
-    var mid = lo + (aimRight - lo) * 0.62;
-    this.camX = lerp(this.camX, mid - CFG.W / 2, k == null ? CFG.CAM_LERP : k);
-
-    // 安全区：屏幕左缘 = camX，右缘 = camX + W
-    // 要求 lo - camX >= pad 且 camX + W - aimRight >= pad
     var pad = 46;
     var cMin = aimRight + pad - CFG.W, cMax = lo - pad;
-    if (cMin <= cMax) this.camX = clamp(this.camX, cMin, cMax);
-    else this.camX = lerp(this.camX, (lo + aimRight) / 2 - CFG.W / 2, (k == null ? CFG.CAM_LERP : k));
+    if (cMin <= cMax) {
+      // 常规：两猴装得下屏幕，视野偏向前进方向（0.62 权重）
+      var mid = lo + (aimRight - lo) * 0.62;
+      this.camX = lerp(this.camX, mid - CFG.W / 2, k == null ? CFG.CAM_LERP : k);
+      this.camX = clamp(this.camX, cMin, cMax);
+    } else {
+      // r15 实机反馈：两猴拉得太远屏幕装不下时，旧逻辑硬居中会把
+      // "正在操作的猴"裁出屏幕左缘（玩家看不见自己的猴）。改为聚焦操作猴。
+      // （注意这里不能再走上面的常规 lerp，双 lerp 会打架）
+      var focus = acting ? acting.x : lo;
+      this.camX = lerp(this.camX, focus - CFG.W * 0.35, k == null ? CFG.CAM_LERP : k);
+    }
   };
 
   // 这只猴原地满蓄力起跳，能不能摸到下一块平台
@@ -1138,7 +1144,12 @@
     }
   };
   Game.prototype._float = function (x, y, text, color) {
-    this.floatTexts.push({ x: x, y: y, text: text, color: color, life: 1.2 });
+    // r15 实机反馈：同一时刻多条浮字（完美+扎到+小心）叠成一坨，往上逐条错位
+    var pile = 0;
+    for (var fi = 0; fi < this.floatTexts.length; fi++) {
+      if (this.floatTexts[fi].life > 0.85) pile++;
+    }
+    this.floatTexts.push({ x: x, y: y - pile * 26, text: text, color: color, life: 1.2 });
   };
   Game.prototype._fx = function (dt) {
     for (var i = this.particles.length - 1; i >= 0; i--) {
