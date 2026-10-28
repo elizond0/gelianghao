@@ -699,7 +699,7 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
   <section class="screen sheet scrollable" id="scrHow">
     <h2>怎么玩</h2>
     <ul class="how">
-      <li><b>按住屏幕蓄力，松手起跳。</b>按得越久跳得越远、越高。</li>
+      <li><b>按下立刻起跳，按住持续往上飞，松手快速落地。</b>按多久决定飞多高多远（头顶燃料条见底就开始落）。</li>
       <li>头顶有<b>橙色箭头</b>的那只猴子，才是你现在能操作的那只。</li>
       <li>它掉进坑里别慌：它会<b>挂在绳子上贴着水面荡</b>（不沉底），等箭头换到另一只，<b>让它往前跳过坑</b>，绳子就会把伙伴<b>钓上来</b>，还能加分。</li>
       <li>两只一起掉进去，这局就结束。</li>
@@ -708,10 +708,10 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
       <li><b>完美着陆</b>：落在平台正中央的虚线圈里，连击不断加分越高（+15 起，3 连击后每次再 +15）。</li>
       <li><b>金香蕉</b>：挂得更高的金色香蕉，+50 分，看见了就跳高一点去够。</li>
       <li><b>蓝色小旗是存档点</b>：双落水后从最近的旗子接着跳，分数保留；同一面旗连掉 3 次才真结算。</li>
-      <li><b>荡绳助力</b>：后面的猴子吊在绷紧的绳上会被往前荡，借力能跳过单跳够不着的坑。</li>
+      <li><b>弹性绳子</b>：绳子拉得越长绷得越紧。飞得又高又远时，绷紧的绳子会把<b>站着的伙伴直接拽起来</b>跟你一起飞。</li>
       <li><b>移动浮台</b>：木牌浮台左右巡逻，跟着它一起动，落点要留提前量。</li>
-      <li><b>弹跳蘑菇</b>：红伞蘑菇踩上去自动弹起（约满蓄力力度），连击不清零，是免费的顺风车。</li>
-      <li><b>山口阵风</b>：刮几秒停几秒（风线消失=停风）。顺风窗口大胆满蓄力能飞更远，顶风时少蓄一点；落了地就没风。</li>
+      <li><b>弹跳蘑菇</b>：踩中红伞蘑菇会自动弹起并往前飞一段（自动帮你按住），连击不清零，是免费的顺风车；垫外的石板可以正常落脚。</li>
+      <li><b>山口阵风</b>：刮几秒停几秒（风线消失=停风）。顺风窗口按久一点能飞更远，顶风时早点松手；落了地就没风。</li>
       <li><b>越往山上越冷</b>：过碎石坡、翻雪线，山顶是暴风雪，风更狠；看看你俩能爬多高。</li>
       <li><b>每日挑战</b>：每天固定一座山，全球同图，比谁爬得远、用时短。</li>
       <li><b>联机</b>：你俩各控一只猴子，轮流接力，一起把分数做高。</li>
@@ -725,7 +725,7 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
 <script>
 /* eslint-disable */
 /* 哥俩好 · 网页端单文件打包产物 —— 由 scripts/build-web-bundle.js 自动生成，请勿手改 */
-/* 生成时间：2026-10-28T08:24:42.566Z */
+/* 生成时间：2026-10-28T09:08:04.705Z */
 (function () {
   'use strict';
   var __mods = {};
@@ -773,6 +773,21 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
     JUMP_RANGE: 150,      // 满蓄力相对最小跳多飞 150px：要覆盖后期最大 gap(185) - 平台半宽
     MAX_POWER_MS: 1100,   // 蓄力慢一点，落点更好拿捏
     ROPE_REST: 150,
+    // ---- r14 飞行模型（对标原版：按下即起跳、按住上升、松手快落，弃用蓄力）----
+    FLY_VX: 250,          // 起飞水平速度（恒定，距离由按多久决定）
+    JUMP_UP: 330,         // 起跳瞬间竖直速度
+    FLY_THRUST: 1050,     // 按住期间上升推力
+    FLY_VY_MAX: 430,      // 上升速度上限
+    FLY_TIME: 1.05,       // 最长持飞时间（秒），耗尽后按住也开始下落
+    FALL_MULT: 2.0,       // 松手后快速下落的重力倍率
+    VY_MAX: 980,          // 下落终端速度
+    // ---- r14 弹性绳（对标原版：绳子可拉长，飞高能把站着的伙伴拽起来）----
+    ROPE_K: 6,            // 弹簧系数（张力 = (超长-松弛带) * K）
+    ROPE_SLACK: 90,       // 松弛带：超出原长这么多才真正绷紧（绳子是软弹的，不是钢索）
+    ROPE_F_MAX: 900,      // 张力上限
+    LIFT_T: 200,          // 把地面伙伴拽离平台的张力阈值（低门槛：一起飞才有原版味）
+    ROPE_FLYER_SHARE: 0.15, // 飞行猴自身感受到的张力比例（它在"拽人"，不被反向猛拽）
+    ROPE_STRETCH: 3.4,    // 绳子最大拉伸倍数（rest 的倍数），超出硬收
     COYOTE: 0.09,       // 土狼时间：离开平台后这么久内仍可起跳（秒）
     JUMP_BUFFER: 0.15,  // 跳跃缓冲：落地前这么久内按的键，落地立即开始蓄力（秒）
     PATIENCE: 5.5,      // 落水后挂在绳上能荡/被救的耐心时间（秒）
@@ -868,8 +883,8 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
     this.vx = 0;
     this.vy = 0;
     this.grounded = true;
-    this.charging = false;
-    this.chargeT = 0;
+    this.charging = false;   // r14 起改名为"按住飞行"语义（保留字段名兼容联机协议）
+    this.chargeT = 0;        // 按住时长（秒）
     this.power = 0;
     this.squash = 1;
     this.wetT = 0;
@@ -1151,20 +1166,11 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
     if (!this.canIOperate()) return;
     var m = this.monkeys[this.active];
     if (m.stunT > 0 || m.wetT > 0) return;
-    if (!m.grounded) {
-      // 土狼时间：刚离开平台的一瞬间，仍算"在平台上"按下
-      if (m.coyoteT > 0 && !m.charging) {
-        m.charging = true;
-        m.chargeT = 0;
-        this.lastOpOut = { t: 'down', m: m.idx };
-        return;
-      }
-      // 跳跃缓冲：空中先按下，落地立即开始蓄力（按住不放才有效）
-      m.jumpBufT = CFG.JUMP_BUFFER;
-      return;
-    }
+    if (!m.grounded) return;   // r14：按下只在地面生效（起跳即飞），空中无蓄力/缓冲
+    // 原版手感：按下立刻起跳，按住持续上升（飞行），松手快速下落
     m.charging = true;
     m.chargeT = 0;
+    this._launch(m);
     this.lastOpOut = { t: 'down', m: m.idx };
   };
 
@@ -1174,19 +1180,14 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
     if (!this.canIOperate()) return;
     var m = this.monkeys[this.active];
     if (!m.charging) return;
-    m.charging = false;
-    m.jumpBufT = 0;
-    this._launch(m, this._effPower(m));
-    this.lastOpOut = { t: 'up', m: this.active, p: m.power };
-    this.emit('jump', { idx: m.idx, power: m.power, from: m.x });
+    m.charging = false;      // 松手：停止上升，进入快速下落
+    this.lastOpOut = { t: 'up', m: this.active };
+    this.emit('jumpEnd', { idx: m.idx });
   };
 
-  Game.prototype._launch = function (m, t) {
-    t = clamp(t, 0, 1);
-    m.power = t;
-    var dist = CFG.MIN_JUMP + t * CFG.JUMP_RANGE;
-    m.vx = dist * CFG.JUMP_VX;
-    m.vy = -dist * CFG.JUMP_VY;
+  Game.prototype._launch = function (m) {
+    m.vx = CFG.FLY_VX;
+    m.vy = -CFG.JUMP_UP;
     m.grounded = false;
     m.squash = 0.78;
     m.hasJumped = true;
@@ -1194,16 +1195,13 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
     this._lastSwitch = this.time;
   };
 
-  // 蓄力有效力度：0->1->0 三角波（满蓄后继续按会往回滚，逼玩家看准时机松手）
+  // r14：飞行有效时长 = 按住时长（封顶 FLY_TIME），不再有蓄力回滚
   Game.prototype._effPower = function (m) {
-    var T = CFG.MAX_POWER_MS / 1000;
-    if (!(m.chargeT > 0)) return 0;
-    var u = m.chargeT % (2 * T);
-    return u <= T ? u / T : 2 - u / T;
+    return clamp(m.chargeT / CFG.FLY_TIME, 0, 1);
   };
 
-  Game.prototype.chargeFor = function (dist) {
-    return clamp((dist - CFG.MIN_JUMP) / CFG.JUMP_RANGE, 0, 1) * CFG.MAX_POWER_MS / 1000;
+  Game.prototype.chargeFor = function (holdSec) {
+    return clamp(holdSec, 0, CFG.FLY_TIME);
   };
 
   // 落点预测：和 update() 里的物理保持一致（含水平空气阻尼），否则瞄准线会骗人
@@ -1232,19 +1230,29 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
 
   // 落点预测：数字积分，和 update() 的物理完全一致（阻尼 + 风），保证瞄准线可信。
   // 旧版闭式解没法算风，风区里"瞄哪落哪"会失灵，已改成 1/120s 步进积分。
-  Game.prototype.projectLanding = function (fromX, power, fromY) {
-    var dist = CFG.MIN_JUMP + clamp(power, 0, 1) * CFG.JUMP_RANGE;
-    var vx = dist * CFG.JUMP_VX, vy = -dist * CFG.JUMP_VY;
+  // r14 落点预测：按"按住 holdSec 秒"的飞行模拟（起跳→按住上升→松手快落），
+  // 物理与 update() 一致（推力/快落/空气阻尼/阵风）。stopY 为落点判定高度。
+  Game.prototype.projectLanding = function (fromX, holdSec, fromY, stopY) {
+    var vx = CFG.FLY_VX, vy = -CFG.JUMP_UP;
     var x = fromX, y = fromY || CFG.GROUND_Y;
     var dt = 1 / 120;
     var t0 = this.time;
-    for (var i = 0; i < 900; i++) {
+    var left = clamp(holdSec, 0, CFG.FLY_TIME);
+    var sy = stopY == null ? CFG.WATER_Y : stopY;
+    for (var i = 0; i < 1200; i++) {
+      if (left > 0) {
+        left -= dt;
+        vy -= CFG.FLY_THRUST * dt;
+        if (vy < -CFG.FLY_VY_MAX) vy = -CFG.FLY_VY_MAX;
+      } else {
+        vy += CFG.GRAVITY * (CFG.FALL_MULT - 1) * dt;
+      }
       vx += this._windAt(x, t0 + i * dt) * dt;   // 风随飞行时间演进，预测才和实际一致
       vx *= (1 - DRAG * dt);
       vy += CFG.GRAVITY * dt;
       x += vx * dt;
       y += vy * dt;
-      if (vy > 0 && y >= CFG.WATER_Y) break;
+      if (vy > 0 && y >= sy) break;
     }
     return x;
   };
@@ -1252,7 +1260,7 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
   Game.prototype.chargeRatio = function () {
     var m = this.monkeys[this.active];
     if (!m || !m.charging) return 0;
-    return clamp(this._effPower(m), 0, 1);
+    return this._effPower(m);   // r14：按住时长 / 最长飞行时间
   };
 
   // ---------- 主循环 ----------
@@ -1287,7 +1295,10 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
 
     for (var i = 0; i < 2; i++) {
       var m = ms[i];
-      if (m.charging) { m.chargeT += dt; m.squash = 1 - this._effPower(m) * 0.24; }
+      if (m.charging) {
+        m.chargeT += dt; m.squash = 0.9;   // r14：按住=飞行中
+        if (m.autoFly > 0 && m.chargeT >= m.autoFly) { m.charging = false; m.autoFly = 0; }
+      }
       if (m.stunT > 0) m.stunT -= dt;
       if (m.coyoteT > 0) m.coyoteT -= dt;
       if (m.jumpBufT > 0) m.jumpBufT -= dt;
@@ -1301,6 +1312,14 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
 
       if (!m.grounded && m.wetT <= 0) {
         m.vy += CFG.GRAVITY * dt;
+        // r14 飞行模型：按住期间持续上升推力（时长封顶），松手后快速下落
+        if (m.charging && m.chargeT < CFG.FLY_TIME) {
+          m.vy -= CFG.FLY_THRUST * dt;
+          if (m.vy < -CFG.FLY_VY_MAX) m.vy = -CFG.FLY_VY_MAX;
+        } else {
+          m.vy += CFG.GRAVITY * (CFG.FALL_MULT - 1) * dt;
+        }
+        if (m.vy > CFG.VY_MAX) m.vy = CFG.VY_MAX;
         var prevX = m.x, prevY = m.y;
         m.x += m.vx * dt;
         m.y += m.vy * dt;
@@ -1311,7 +1330,7 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
         }
         // 阵风：只在空中受力（地面无感，落地即安全），方向和强度由地形决定
         if (!m.grounded) {
-          m.vx *= (1 - 0.25 * dt);
+          m.vx *= (1 - DRAG * dt);
           var wf = this._windAt(m.x);
           if (wf) m.vx += wf * dt;
         }
@@ -1396,15 +1415,14 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
     var otherReady = other.grounded && other.stunT <= 0 && other.wetT <= 0;
     var curBad = cur.wetT > 0 || cur.stunT > 0 || !cur.grounded;
 
+    // ⓪ 正在按住飞行/蓄力的这一棒绝不抢（r14：飞行也在空中，必须先于 ① 判断，
+    //    否则空中飞行会被 ① 当成"落水/被晕"抢棒，就是"顺序错乱"bug 的根源）
+    if (cur.charging && cur.wetT <= 0 && cur.stunT <= 0) return;
     // ① 落水/被晕：换另一只来救
     if (curBad) {
       if (otherReady) { this._lastSwitch = this.time; this.setActive(1 - this.active); }
       return;
-    }
-    // ⓪ 正在蓄力的这一棒绝不抢：pressEnd 只作用于 active 猴，
-    //    蓄力中途换手会让松手落空 / 力度算到别人头上，
-    //    表现为"两只猴差距一大就顺序错乱、跳不出去"（④ 每帧都想交棒给落后那只）
-    if (cur.charging) return;
+    }   // r14：按住飞行中不抢棒
     // ② 还没起跳过（刚开局），或这一棒还在空中 → 保持
     if (!cur.hasJumped) return;
     if (!otherReady) return;
@@ -1464,9 +1482,9 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
     // 只往后看到"当前力度落点 + 一点余量"，力度越大视野越远，角色不会被挤到边上。
     var aimRight = hi;
     var acting = ms[this.active];
-    if (acting && acting.charging) {
-      var pw = clamp(this._effPower(acting), 0, 1);
-      var reach = this.projectLanding(acting.x, pw, acting.y) + 40;
+    if (acting && acting.charging && !acting.grounded) {
+      // r14：按住飞行时把"满按住时长的落点"算进取景，视野跟着飞
+      var reach = this.projectLanding(acting.x, CFG.FLY_TIME, acting.y) + 40;
       if (reach > aimRight) aimRight = reach;
     }
 
@@ -1490,7 +1508,7 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
     if (!q) return false;
     // 用"满蓄力的真实落点"判断，而不是平台左缘距离（落点会超过平台左缘很多）
     // 注意：绳子只在"两只都在空中"时才互相牵扯，另一只站在地上不会缩短这一跳，不用修正
-    var land = this.projectLanding(m.x, 1, m.y);
+    var land = this.projectLanding(m.x, CFG.FLY_TIME, m.y);
     return land >= q.x - 4;
   };
 
@@ -1500,29 +1518,18 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
     return x >= plat.pad0 && x <= plat.pad1;
   };
 
-  // 弹跳力度自适应：在 0.3~1 之间找"落点最接近下一块平台中心"的力度。
-  // 积分物理与 update()/projectLanding() 一致（重力 + 水平空气阻尼 + 阵风）。
-  Game.prototype._springPower = function (fromX, plat) {
+  // r14 弹跳自适应：扫描"自动按住时长"，找落点最接近下一块平台中心的值。
+  // 积分物理与 update()/projectLanding() 一致（推力/快落 + 空气阻尼 + 阵风）。
+  Game.prototype._springHold = function (fromX, plat) {
     var edge = plat.x + plat.w;
     var next = this.nextPlatform(edge);
-    if (!next) return CFG.SPRING_POWER;              // 没有下一块（不该发生）→ 原满力
+    if (!next) return CFG.FLY_TIME * 0.9;
     var target = next.x + next.w / 2;
-    var landY = next.y;
-    var best = CFG.SPRING_POWER, bestErr = 1e9;
-    for (var p = 0.3; p <= 1.001; p += 0.02) {
-      var dist = CFG.MIN_JUMP + p * CFG.JUMP_RANGE;
-      var vx = dist * CFG.JUMP_VX, vy = -dist * CFG.JUMP_VY;
-      var x = fromX, y = plat.y, dt = 1 / 120, i = 0;
-      for (; i < 900; i++) {
-        vx += this._windAt(x, this.time + i * dt) * dt;
-        vx *= (1 - 0.25 * dt);
-        vy += CFG.GRAVITY * dt;
-        x += vx * dt;
-        y += vy * dt;
-        if (vy > 0 && y >= landY) break;
-      }
-      var err = Math.abs(x - target);
-      if (err < bestErr) { bestErr = err; best = Math.min(1, p); }
+    var best = CFG.FLY_TIME * 0.9, bestErr = 1e9;
+    for (var h = 0; h <= CFG.FLY_TIME + 0.001; h += 0.05) {
+      var land = this.projectLanding(fromX, h, plat.y, next.y);
+      var err = Math.abs(land - target);
+      if (err < bestErr) { bestErr = err; best = h; }
     }
     return best;
   };
@@ -1537,9 +1544,12 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
     // 弹跳力度自适应——自动取"正好落到下一块平台中心"的力度，
     // 保证"踩垫=前进一格"，不再出现固定满力越过近台掉水的陷阱（r13 实机反馈）
     if (plat.type === 'spring' && m.vy >= 0 && this._onSpringPad(m.x, plat)) {
-      var sd = CFG.MIN_JUMP + CFG.JUMP_RANGE * this._springPower(m.x, plat);
-      m.vx = sd * CFG.JUMP_VX;
-      m.vy = -sd * CFG.JUMP_VY;
+      // r14：蘑菇弹起 = 自动"按住飞行"，时长取"正落下一块平台中心"的值
+      m.charging = true;
+      m.chargeT = 0;
+      m.autoFly = Math.max(0.12, this._springHold(m.x, plat));
+      m.vx = CFG.FLY_VX * 0.92;
+      m.vy = -CFG.JUMP_UP * 1.08;
       m.grounded = false;
       m.squash = 0.68;
       m.hasJumped = true;
@@ -1547,12 +1557,6 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
       this._burst(m.x, plat.y, 9, '#d0bfff');
       this.emit('spring', { idx: m.idx });
       return;
-    }
-    // 跳跃缓冲：落地前一刻按的键，落地立即开始蓄力（键还按着才算）
-    if (m.jumpBufT > 0 && this.active === m.idx) {
-      m.jumpBufT = 0;
-      m.charging = true;
-      m.chargeT = 0;
     }
     // 记录"站稳过的最远位置"：换人时用它判断谁落后、这一棒是否已经跳完
     if (m.progressX < m.x) m.progressX = m.x;
@@ -1597,28 +1601,41 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
     var rest = this.ropeRest();
     var over = d - rest;
 
-    // 两端都在空中：绳子绷紧互相牵扯。
-    // 这里直接把位置往回拽 25% 是"瞬移"，会把抛物线打乱、玩家按同样久却跳到别处；
-    // 改成作用在速度上（限幅），手感更可预测。
-    if (!a.grounded && !b.grounded && a.wetT <= 0 && b.wetT <= 0 && over > 0) {
+    // ---- r14 弹性绳（对标原版）：超过原长按弹簧互相拉，张力可把地面伙伴拽离平台 ----
+    if (over > 0) {
       var nx = dx / d, ny = dy / d;
-      // 两猴差距远超绳长（接力落后好几块平台）时按"绳子松垮"处理：
-      // 只保留近距离的纠缠手感，否则回拽会把前猴的跳跃整个拖垮
-      var eff = Math.min(over, 150);
-      var pull = Math.min(eff * 6, 260) * dt;
-      a.vx += nx * pull; a.vy += ny * pull;
-      b.vx -= nx * pull; b.vy -= ny * pull;
-
-      // 摆荡助力（面包和年糕的"悠起来"）：绳子绷紧、下面那只正在下落时，
-      // 像秋千一样把它往上悠一把，并顺着前进方向往前送——制造"借绳发力"的手感。
-      // 水平推力与绳回拽反向，用途是"抵消回拽、把跳距送出去"，不是加速器；
-      // 只加在速度上、幅度受限，不破坏"按多久跳多远"的可预测性。
-      // 注意：水平推力恒为 +x（前进方向）。早先按"远离锚点"给方向，
-      // 后排猴下落时会被往后推，与"接力前进"的玩法相悖，已修正。
-      var lower = a.y >= b.y ? a : b;
-      if (lower.vy > 0 && over > 6) {
-        lower.vy -= Math.min(eff * CFG.SWING_LIFT, 110) * dt;
-        lower.vx += Math.min(eff * 1.2, 110) * dt;
+      // 松弛带：绳子是软弹的，超出原长一段才真正绷紧出力
+      var eff = over - CFG.ROPE_SLACK;
+      if (eff > 0) {
+        var F = Math.min(eff * CFG.ROPE_K, CFG.ROPE_F_MAX);   // 张力（加速度量纲）
+        // 拉伸超过弹性上限后弹簧急剧变硬（不瞬移，只是再也拉不长）
+        var stretchMax = rest * CFG.ROPE_STRETCH;
+        if (d > stretchMax) F = Math.min(F + (d - stretchMax) * 25, 2000);
+        // 空中的猴受张力（被拉向对方）；对方湿挂时由单摆处理，不出这个力
+        for (var ri = 0; ri < 2; ri++) {
+          var rm = ms[ri];
+          if (rm.grounded || rm.wetT > 0 || ms[1 - ri].wetT > 0) continue;
+          var share = rm.charging ? CFG.ROPE_FLYER_SHARE : 1;  // 按住飞行=主动拽人方，只吃小份额
+          // 伙伴还锚在地上时，绳子只传"刚好能把人拽起来"的力，再多也传不过去
+          var Fm = ms[1 - ri].grounded ? Math.min(F, CFG.LIFT_T * 1.5) : F;
+          var dirX = (ri === 0 ? 1 : -1) * nx, dirY = (ri === 0 ? 1 : -1) * ny;
+          rm.vx += dirX * Fm * share * dt;
+          rm.vy += dirY * Fm * share * dt;
+        }
+        // 原版标志手感：飞高拉远后张力足够大，把站着的伙伴直接拽离平台
+        for (var li = 0; li < 2; li++) {
+          var gm = ms[li], fo = ms[1 - li];
+          if (!gm.grounded || gm.wetT > 0 || gm.stunT > 0) continue;
+          if (fo.grounded || fo.wetT > 0) continue;   // 对方悬空才可能绷出大张力
+          var fy = (fo.y - gm.y) / d * F;             // 对方在我上方 → fy<0（向上拉）
+          if (-fy > CFG.LIFT_T && fo.y < gm.y - 40) {
+            gm.grounded = false;
+            gm.squash = 1.12;
+            gm.vx += (fo.x - gm.x) / d * F * dt;
+            gm.vy += fy * dt * 2 - 80;                // 拔离平台并给一把向上的初速
+            this.emit('lift', { idx: gm.idx, by: fo.idx });
+          }
+        }
       }
     }
 
@@ -1814,7 +1831,7 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
       m.y = y;
       m.vx = 0; m.vy = 0;
       m.grounded = true;
-      m.wetT = 0; m.stunT = 0; m.charging = false;
+      m.wetT = 0; m.stunT = 0; m.charging = false; m.autoFly = 0;
       m.squash = 1.12;
       m.hasJumped = true;
     }
@@ -1891,13 +1908,13 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
     var m = this.monkeys[api.m];
     if (!m || m.wetT > 0) return;
     if (api.t === 'down') {
-      if (m.grounded && m.stunT <= 0 && !m.charging) { m.charging = true; m.chargeT = 0; }
+      if (m.grounded && m.stunT <= 0 && !m.charging) {
+        m.charging = true; m.chargeT = 0;
+        this._launch(m);
+        this.emit('jump', { idx: m.idx, from: m.x, remote: true });
+      }
     } else if (api.t === 'up' && m.charging) {
-      m.charging = false;
-      var ratio = this._effPower(m);
-      if (typeof api.p === 'number') ratio = api.p;
-      this._launch(m, ratio);
-      this.emit('jump', { idx: m.idx, power: m.power, from: m.x, remote: true });
+      m.charging = false;   // r14：松手=停止飞行
     }
   };
 
@@ -2140,7 +2157,6 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
     this._pillarOverlay(g);
     this._particles(g);
     this._floats(g);
-    this._aim(g, ui);
 
     ctx.restore();
     ctx.restore();
@@ -2762,7 +2778,7 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
         active: isActive,
         canOp: canOp,
         charging: m.charging,
-        charge: m.charging ? Math.min(1, m.chargeT / (CFG.MAX_POWER_MS / 1000)) : 0,
+        charge: m.charging ? Math.min(1, m.chargeT / CFG.FLY_TIME) : 0,
         wet: m.wetT > 0,
         stun: m.stunT > 0,
         ghost: m.wetT < -1,
@@ -2986,105 +3002,12 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
         ctx.fillStyle = 'rgba(0,0,0,0.35)';
         roundRect(ctx, bx, by, bw, bh, 3.5);
         ctx.fill();
-        var ratio = st.charge;
-        ctx.fillStyle = ratio > 0.85 ? '#ff5252' : (ratio > 0.5 ? '#ffb300' : '#66bb6a');
+        var ratio = st.charge;   // r14：飞行燃料余量（1=刚起飞，0=油尽开始下落）
+        ctx.fillStyle = ratio > 0.7 ? '#66bb6a' : (ratio > 0.3 ? '#ffb300' : '#ff5252');
         roundRect(ctx, bx + 1, by + 1, (bw - 2) * ratio, bh - 2, 2.5);
         ctx.fill();
       }
     }
-  };
-
-  Renderer.prototype._aim = function (g, ui) {
-    if (!ui || !ui.aiming) return;
-    var m = g.monkeys[g.active];
-    if (!m || !m.charging) return;
-    var ctx = this.ctx;
-    var p = g.chargeRatio();
-    var target = g.projectLanding(m.x, p, m.y);
-    // 落点高度按真实平台算，别一律画在 GROUND_Y
-    var plat = g.platformAt(target);
-    var landY = plat ? plat.y : CFG.GROUND_Y;
-    var hit = !!plat;
-
-    // 目标平台上的"安全落点区间"：告诉玩家这一格该落在哪
-    var here = g.platformAt(m.x);
-    var edge = here ? here.x + here.w : m.x;
-    var next = g.nextPlatform(edge);
-    if (next) {
-      var safeL = next.x + 6, safeR = next.x + next.w - 6;
-      ctx.save();
-      ctx.fillStyle = 'rgba(64,192,87,0.45)';
-      roundRect(ctx, safeL, next.y - 12, safeR - safeL, 10, 5);
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.7)';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-      ctx.restore();
-    }
-
-    var dist = CFG.MIN_JUMP + p * CFG.JUMP_RANGE;
-    var vx = dist * CFG.JUMP_VX, vy = -dist * CFG.JUMP_VY, gr = CFG.GRAVITY;
-    ctx.save();
-    // 采样到"落回平台/水面"为止。用 1/120s 数字积分（和 projectLanding/update 同一套物理），
-    // 否则风区里瞄准线会"瞄 A 落 B"；落空时按水面再低 16px 算
-    var missY = CFG.WATER_Y - 4;
-    // 截止条件：下落段一碰到"落点高度"（平台面或水面）就停。
-    // 旧写法 sy0-(m.y-24)>=targetDrop 展开后是 2*m.y-24-landY，
-    // 落点比起跳点低得多（水面/低台）时线会在半空被截断——"虚线时常不显示"的根因
-    var stopY = hit ? landY : missY;
-    var sx0 = m.x, sy0 = m.y - 24, svx = vx, svy = vy;
-    var pts = [[sx0, sy0]];
-    var sdt = 1 / 120;
-    for (var si = 0; si < 900; si++) {
-      svx += (g._windAt ? g._windAt(sx0) : 0) * sdt;
-      svx *= (1 - 0.25 * sdt);
-      svy += gr * sdt;
-      sx0 += svx * sdt;
-      sy0 += svy * sdt;
-      pts.push([sx0, sy0]);
-      if (svy > 0 && sy0 >= stopY) break;
-    }
-    function strokePath(color, w) {
-      ctx.strokeStyle = color;
-      ctx.lineWidth = w;
-      ctx.beginPath();
-      for (var j = 0; j < pts.length; j++) {
-        if (j === 0) ctx.moveTo(pts[j][0], pts[j][1]); else ctx.lineTo(pts[j][0], pts[j][1]);
-      }
-      ctx.stroke();
-    }
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    strokePath('rgba(0,0,0,0.30)', 6);          // 外描边
-    strokePath('rgba(0,0,0,0.55)', 3.2);        // 内芯
-    if (ctx.setLineDash) ctx.setLineDash([6, 5]);
-    strokePath(hit ? 'rgba(140,255,175,0.95)' : 'rgba(255,140,140,0.95)', 2.2);
-    if (ctx.setLineDash) ctx.setLineDash([]);
-
-    // 落点圈：命中绿 / 落水红，带白描边保证对比；不够远时给个文字提示
-    ctx.beginPath();
-    ctx.arc(target, landY - 3, 9, 0, Math.PI * 2);
-    ctx.fillStyle = hit ? 'rgba(64,192,87,0.92)' : 'rgba(240,82,82,0.92)';
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,0.95)';
-    ctx.lineWidth = 2.2;
-    ctx.stroke();
-
-    if (!hit) {
-      ctx.font = 'bold 12px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillStyle = 'rgba(0,0,0,0.45)';
-      // 蓄力是三角波（满蓄后回滚），"按久一点"在回滚下降段是错误指导——
-      // 这时该松手重按，别让玩家越按越近
-      var T = CFG.MAX_POWER_MS / 1000;
-      var tip = (m.chargeT % (2 * T)) > T ? '蓄过头了，松手重来' : '再按久一点';
-      var tw = ctx.measureText(tip).width;
-      roundRect(ctx, target - tw / 2 - 7, landY - 34, tw + 14, 18, 9);
-      ctx.fill();
-      ctx.fillStyle = '#fff';
-      ctx.fillText(tip, target, landY - 21);
-    }
-    ctx.restore();
   };
 
   Renderer.prototype._particles = function (g) {
@@ -5958,12 +5881,11 @@ module.exports = {
     startSolo: startSoloGame,
     pressStart: function () { if (game) game.pressStart(); },
     pressEnd: function () { if (game) game.pressEnd(); },
-    jump: function (dist) {
+    jump: function (holdSec) {
       if (!game || game.state !== 'playing') return;
-      game.pressStart();
+      game.pressStart();                            // 起飞
       var m = game.monkeys[game.active];
-      m.chargeT = game.chargeFor(dist);
-      game.pressEnd();
+      if (m) m.autoFly = game.chargeFor(holdSec);   // 自动按住这么久后松手
     }
   };
 
