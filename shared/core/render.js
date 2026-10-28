@@ -132,17 +132,17 @@
     if (sunA > 0) {
       ctx.globalAlpha = sunA;
       ctx.fillStyle = COL.sun;
-      circle(ctx, 300, 92, 34);
+      circle(ctx, 318, 150, 34);
       ctx.globalAlpha = sunA * 0.25;
-      circle(ctx, 300, 92, 48);
+      circle(ctx, 318, 150, 48);
     }
     if (dn.phase === 3 || (dn.phase === 2 && dn.frac > 0.6)) {
       var moonA = dn.phase === 3 ? 1 : (dn.frac - 0.6) / 0.4;
       ctx.globalAlpha = moonA * 0.95;
       ctx.fillStyle = '#f4f1e0';
-      circle(ctx, 300, 92, 26);
+      circle(ctx, 318, 150, 26);
       ctx.fillStyle = dn.top;   // 用天空色咬掉一块 = 月牙
-      circle(ctx, 310, 86, 22);
+      circle(ctx, 328, 144, 22);
     }
     ctx.globalAlpha = 1;
 
@@ -709,7 +709,7 @@
 
   Renderer.prototype._piranha = function (x, y, t) {
     var ctx = this.ctx;
-    var yy = y + 26 + Math.sin(t * 3) * 3;
+    var yy = y + 4 + Math.sin(t * 3) * 3;   // r15 实机：+26 会画到平台底下悬空，贴台面站
     ctx.save();
     ctx.translate(x, yy);
     ctx.fillStyle = '#ef5350';
@@ -811,7 +811,7 @@
     var dist = g.distance || 0;
     var lv = Math.floor(dist / M) + 1;
     var frac = (dist % M) / M;
-    var bw = 150, bh = 7, bx = (CFG.W - bw) / 2, by = 16;
+    var bw = 150, bh = 7, bx = (CFG.W - bw) / 2, by = 78;   // r15 实机：DOM HUD 约占画布顶部 70px，下移避让
     ctx.save();
     ctx.globalAlpha = 0.88;
     ctx.fillStyle = 'rgba(0,0,0,0.28)';
