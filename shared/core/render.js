@@ -176,7 +176,6 @@
     this._pillarOverlay(g);
     this._particles(g);
     this._floats(g);
-    this._aim(g, ui);
 
     ctx.restore();
     ctx.restore();
@@ -798,7 +797,7 @@
         active: isActive,
         canOp: canOp,
         charging: m.charging,
-        charge: m.charging ? Math.min(1, m.chargeT / (CFG.MAX_POWER_MS / 1000)) : 0,
+        charge: m.charging ? Math.min(1, m.chargeT / CFG.FLY_TIME) : 0,
         wet: m.wetT > 0,
         stun: m.stunT > 0,
         ghost: m.wetT < -1,
@@ -1022,105 +1021,12 @@
         ctx.fillStyle = 'rgba(0,0,0,0.35)';
         roundRect(ctx, bx, by, bw, bh, 3.5);
         ctx.fill();
-        var ratio = st.charge;
-        ctx.fillStyle = ratio > 0.85 ? '#ff5252' : (ratio > 0.5 ? '#ffb300' : '#66bb6a');
+        var ratio = st.charge;   // r14：飞行燃料余量（1=刚起飞，0=油尽开始下落）
+        ctx.fillStyle = ratio > 0.7 ? '#66bb6a' : (ratio > 0.3 ? '#ffb300' : '#ff5252');
         roundRect(ctx, bx + 1, by + 1, (bw - 2) * ratio, bh - 2, 2.5);
         ctx.fill();
       }
     }
-  };
-
-  Renderer.prototype._aim = function (g, ui) {
-    if (!ui || !ui.aiming) return;
-    var m = g.monkeys[g.active];
-    if (!m || !m.charging) return;
-    var ctx = this.ctx;
-    var p = g.chargeRatio();
-    var target = g.projectLanding(m.x, p, m.y);
-    // 落点高度按真实平台算，别一律画在 GROUND_Y
-    var plat = g.platformAt(target);
-    var landY = plat ? plat.y : CFG.GROUND_Y;
-    var hit = !!plat;
-
-    // 目标平台上的"安全落点区间"：告诉玩家这一格该落在哪
-    var here = g.platformAt(m.x);
-    var edge = here ? here.x + here.w : m.x;
-    var next = g.nextPlatform(edge);
-    if (next) {
-      var safeL = next.x + 6, safeR = next.x + next.w - 6;
-      ctx.save();
-      ctx.fillStyle = 'rgba(64,192,87,0.45)';
-      roundRect(ctx, safeL, next.y - 12, safeR - safeL, 10, 5);
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.7)';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-      ctx.restore();
-    }
-
-    var dist = CFG.MIN_JUMP + p * CFG.JUMP_RANGE;
-    var vx = dist * CFG.JUMP_VX, vy = -dist * CFG.JUMP_VY, gr = CFG.GRAVITY;
-    ctx.save();
-    // 采样到"落回平台/水面"为止。用 1/120s 数字积分（和 projectLanding/update 同一套物理），
-    // 否则风区里瞄准线会"瞄 A 落 B"；落空时按水面再低 16px 算
-    var missY = CFG.WATER_Y - 4;
-    // 截止条件：下落段一碰到"落点高度"（平台面或水面）就停。
-    // 旧写法 sy0-(m.y-24)>=targetDrop 展开后是 2*m.y-24-landY，
-    // 落点比起跳点低得多（水面/低台）时线会在半空被截断——"虚线时常不显示"的根因
-    var stopY = hit ? landY : missY;
-    var sx0 = m.x, sy0 = m.y - 24, svx = vx, svy = vy;
-    var pts = [[sx0, sy0]];
-    var sdt = 1 / 120;
-    for (var si = 0; si < 900; si++) {
-      svx += (g._windAt ? g._windAt(sx0) : 0) * sdt;
-      svx *= (1 - 0.25 * sdt);
-      svy += gr * sdt;
-      sx0 += svx * sdt;
-      sy0 += svy * sdt;
-      pts.push([sx0, sy0]);
-      if (svy > 0 && sy0 >= stopY) break;
-    }
-    function strokePath(color, w) {
-      ctx.strokeStyle = color;
-      ctx.lineWidth = w;
-      ctx.beginPath();
-      for (var j = 0; j < pts.length; j++) {
-        if (j === 0) ctx.moveTo(pts[j][0], pts[j][1]); else ctx.lineTo(pts[j][0], pts[j][1]);
-      }
-      ctx.stroke();
-    }
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    strokePath('rgba(0,0,0,0.30)', 6);          // 外描边
-    strokePath('rgba(0,0,0,0.55)', 3.2);        // 内芯
-    if (ctx.setLineDash) ctx.setLineDash([6, 5]);
-    strokePath(hit ? 'rgba(140,255,175,0.95)' : 'rgba(255,140,140,0.95)', 2.2);
-    if (ctx.setLineDash) ctx.setLineDash([]);
-
-    // 落点圈：命中绿 / 落水红，带白描边保证对比；不够远时给个文字提示
-    ctx.beginPath();
-    ctx.arc(target, landY - 3, 9, 0, Math.PI * 2);
-    ctx.fillStyle = hit ? 'rgba(64,192,87,0.92)' : 'rgba(240,82,82,0.92)';
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,0.95)';
-    ctx.lineWidth = 2.2;
-    ctx.stroke();
-
-    if (!hit) {
-      ctx.font = 'bold 12px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillStyle = 'rgba(0,0,0,0.45)';
-      // 蓄力是三角波（满蓄后回滚），"按久一点"在回滚下降段是错误指导——
-      // 这时该松手重按，别让玩家越按越近
-      var T = CFG.MAX_POWER_MS / 1000;
-      var tip = (m.chargeT % (2 * T)) > T ? '蓄过头了，松手重来' : '再按久一点';
-      var tw = ctx.measureText(tip).width;
-      roundRect(ctx, target - tw / 2 - 7, landY - 34, tw + 14, 18, 9);
-      ctx.fill();
-      ctx.fillStyle = '#fff';
-      ctx.fillText(tip, target, landY - 21);
-    }
-    ctx.restore();
   };
 
   Renderer.prototype._particles = function (g) {
