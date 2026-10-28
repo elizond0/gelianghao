@@ -770,41 +770,80 @@
     ctx.restore();
   };
 
+  // r16 Verlet 软绳：8 节点质点链，每帧 verlet 积分 + 距离约束——
+  // 松弛自然下垂、绷紧拉直、甩动有尾劲（原版绳子观感）。纯渲染层，不影响判定
   Renderer.prototype._rope = function (g, t) {
     var ctx = this.ctx;
     var a = g.monkeys[0], b = g.monkeys[1];
     var ax = a.x, ay = a.y - 26, bx = b.x, by = b.y - 26;
-    var dx = bx - ax, dy = by - ay;
-    var len = Math.sqrt(dx * dx + dy * dy) || 1;
+    var N = 8;
+    if (!this._ropePts || this._ropePts.length !== N + 1) {
+      this._ropePts = [];
+      for (var i0 = 0; i0 <= N; i0++) {
+        var u0 = i0 / N;
+        var x0 = ax + (bx - ax) * u0, y0 = ay + (by - ay) * u0;
+        this._ropePts.push({ x: x0, y: y0, px: x0, py: y0 });
+      }
+    }
+    var pts = this._ropePts;
     var rest = g.ropeRest();
-    var over = len - rest;
-    var mx = (ax + bx) / 2, my = (ay + by) / 2;
-    // r15 弹性绳视觉：拉伸比 0(松)→1(到弹性上限)。绷得越紧越细、越亮、越偏红，
-    // 松的时候自然下垂——绳子的"软弹感"一眼可见
-    var stretchT = Math.max(0, Math.min(1, over / (rest * ((CFG.ROPE_STRETCH || 3.4) - 1))));
-    var slackT = Math.max(0, Math.min(1, -over / 60));
-    var sag = 6 + slackT * 18 + Math.sin(t * 3) * 2.5;
-    var nx = -dy / len, ny = dx / len;
-    var wob = over > -4 ? 0 : 1;
-    var cxp = mx + nx * sag * wob, cyp = my + ny * sag * wob;
-
+    var segLen = rest / N;
+    // 猴被传送（回检查点/ respawn）时绳子直接重排，不横跨整屏甩
+    var spanNow = Math.sqrt((bx - ax) * (bx - ax) + (by - ay) * (by - ay));
+    if (spanNow > rest * 4.5) {
+      for (var r0 = 0; r0 <= N; r0++) {
+        var u1 = r0 / N;
+        pts[r0].x = pts[r0].px = ax + (bx - ax) * u1;
+        pts[r0].y = pts[r0].py = ay + (by - ay) * u1;
+      }
+    }
+    // verlet 步进：中间节点受重力下垂 + 阻尼
+    for (var j = 1; j < N; j++) {
+      var p2 = pts[j];
+      var vx2 = (p2.x - p2.px) * 0.96, vy2 = (p2.y - p2.py) * 0.96;
+      p2.px = p2.x; p2.py = p2.y;
+      p2.x += vx2;
+      p2.y += vy2 + 0.55;
+    }
+    pts[0].x = ax; pts[0].y = ay; pts[N].x = bx; pts[N].y = by;
+    // 距离约束 3 轮：绳只能拉不能推，每段最多微拉伸 25%（软弹不钢丝）
+    for (var it = 0; it < 3; it++) {
+      for (var s2 = 0; s2 < N; s2++) {
+        var pA = pts[s2], pB = pts[s2 + 1];
+        var dx2 = pB.x - pA.x, dy2 = pB.y - pA.y;
+        var dd2 = Math.sqrt(dx2 * dx2 + dy2 * dy2) || 1;
+        if (dd2 <= segLen) continue;
+        var diff = Math.min(dd2 - segLen, segLen * 0.25) / dd2;
+        var wA = (s2 === 0) ? 0 : 0.5, wB = (s2 + 1 === N) ? 0 : 0.5;
+        var wsum = wA + wB;
+        if (wsum <= 0) continue;
+        pA.x += dx2 * diff * (wA / wsum); pA.y += dy2 * diff * (wA / wsum);
+        pB.x -= dx2 * diff * (wB / wsum); pB.y -= dy2 * diff * (wB / wsum);
+      }
+      pts[0].x = ax; pts[0].y = ay; pts[N].x = bx; pts[N].y = by;
+    }
+    // 张力可视化：两端距离 / 弹性上限 -> 越绷越细越红（沿用 r15 配色映射）
+    var stretchT = Math.max(0, Math.min(1, spanNow / (rest * ((CFG.ROPE_STRETCH || 3.4) - 1))));
+    // 平滑折线：过相邻中点的二次贝塞尔
+    function strokePath() {
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (var k = 1; k < N; k++) {
+        var mx = (pts[k].x + pts[k + 1].x) / 2, my = (pts[k].y + pts[k + 1].y) / 2;
+        ctx.quadraticCurveTo(pts[k].x, pts[k].y, mx, my);
+      }
+      ctx.lineTo(pts[N].x, pts[N].y);
+      ctx.stroke();
+    }
+    ctx.lineCap = 'round';
     ctx.strokeStyle = mixHex(COL.ropeDark, '#c92a2a', stretchT);
     ctx.lineWidth = 6.5 - stretchT * 2.2;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(ax, ay);
-    ctx.quadraticCurveTo(cxp, cyp, bx, by);
-    ctx.stroke();
-    ctx.strokeStyle = stretchT > 0.04 ? mixHex(COL.rope, '#ff8787', stretchT)
-      : (over > -4 ? '#ffe08a' : COL.rope);
+    strokePath();
+    ctx.strokeStyle = stretchT > 0.04 ? mixHex(COL.rope, '#ff8787', stretchT) : COL.rope;
     ctx.lineWidth = Math.max(1.6, 4 - stretchT * 2);
-    ctx.beginPath();
-    ctx.moveTo(ax, ay);
-    ctx.quadraticCurveTo(cxp, cyp, bx, by);
-    ctx.stroke();
+    strokePath();
   };
 
-  // r15 顶部关卡进度条：当前关 + 关内进度（屏幕空间，画在最上层）
   Renderer.prototype._progress = function (g) {
     var ctx = this.ctx;
     var M = CFG.MILESTONE || 500;
