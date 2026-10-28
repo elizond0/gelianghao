@@ -338,8 +338,12 @@
         this._nextCPX += CFG.CP_SPACING;
       }
 
+      // 装饰树/灌木：蘑菇台别挡住红伞（r13 实拍发现树正好盖住蘑菇垫，
+      // 玩家看不见"哪段能弹"），垫区±10px 内不刷
       for (var d = 0; d < 2; d++) {
-        this.decos.push({ x: Math.round(p.x + r() * pw), y: y, kind: r() < 0.5 ? 'tree' : 'bush', s: 0.7 + r() * 0.6 });
+        var dx = Math.round(p.x + r() * pw);
+        if (p.type === 'spring' && dx > p.pad0 - 12 && dx < p.pad1 + 12) continue;
+        this.decos.push({ x: dx, y: y, kind: r() < 0.5 ? 'tree' : 'bush', s: 0.7 + r() * 0.6 });
       }
       this.platforms.push(p);
       last = p;
