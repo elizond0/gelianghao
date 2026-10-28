@@ -725,7 +725,7 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
 <script>
 /* eslint-disable */
 /* 哥俩好 · 网页端单文件打包产物 —— 由 scripts/build-web-bundle.js 自动生成，请勿手改 */
-/* 生成时间：2026-10-28T09:08:04.705Z */
+/* 生成时间：2026-10-28T14:47:55.373Z */
 (function () {
   'use strict';
   var __mods = {};
@@ -788,6 +788,10 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
     LIFT_T: 200,          // 把地面伙伴拽离平台的张力阈值（低门槛：一起飞才有原版味）
     ROPE_FLYER_SHARE: 0.15, // 飞行猴自身感受到的张力比例（它在"拽人"，不被反向猛拽）
     ROPE_STRETCH: 3.4,    // 绳子最大拉伸倍数（rest 的倍数），超出硬收
+    // ---- r15：水面乌龟浮台 + 关卡里程碑 ----
+    TURTLE_CHANCE: 0.3,   // 够宽的坑里刷救生乌龟的概率
+    TURTLE_W: 58,         // 龟背宽
+    MILESTONE: 500,       // 每推进 500m 进入下一关（进度条 + 过关提示）
     COYOTE: 0.09,       // 土狼时间：离开平台后这么久内仍可起跳（秒）
     JUMP_BUFFER: 0.15,  // 跳跃缓冲：落地前这么久内按的键，落地立即开始蓄力（秒）
     PATIENCE: 5.5,      // 落水后挂在绳上能荡/被救的耐心时间（秒）
@@ -821,7 +825,7 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
   };
 
   // 版本号：日期 + 当日构建序号，首页展示
-  var VERSION = 'v2026.10.27-r8';
+  var VERSION = 'v2026.10.28-r15';
 
   // 山体主题：由 levelAt() 的档位驱动，渲染层读同一个下标做配色/飘雪
   // （面包和年糕的"山脚 -> 雪线 -> 暴风雪山顶"爬升感）
@@ -913,6 +917,7 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
     this.state = 'ready';
     this.distance = 0;
     this.maxX = 0;
+    this.milestone = 0;       // r15：已进入的关卡（每 MILESTONE 米 +1）
     this.coins = 0;
     this.rescues = 0;
     this.score = 0;
@@ -1035,6 +1040,17 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
       y = clamp(y, CFG.GROUND_Y - 44, CFG.GROUND_Y + 34);
       var p = { x: last.x + last.w + gap, w: pw, y: y, type: 'normal' };
       if (L.ice && r() < 0.22) p.type = 'ice';
+
+      // r15 水面乌龟：够宽的坑里浮一只乌龟当救生台——跳短了落龟背还能再起跳，
+      // "踩空必死"的大坑变成有第二次机会（进山脚第一档之后就刷）
+      if (gap >= 80 && li >= 1 && r() < CFG.TURTLE_CHANCE) {
+        this.platforms.push({
+          x: Math.round(last.x + last.w + gap / 2 - CFG.TURTLE_W / 2),
+          w: CFG.TURTLE_W, y: CFG.WATER_Y - 12, y0: CFG.WATER_Y - 12,
+          type: 'turtle',
+          bobA: 4 + r() * 3, bobSpd: 0.9 + r() * 0.8, ph: r() * 6.28
+        });
+      }
 
       // 移动浮台（山腰以上）：绕初始点做三角波巡逻，位置由时间决定、两端一致
       var li = levelIdx(p.x);
@@ -1276,6 +1292,12 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
     // （不载猴的话猴会悬在原地被台子甩出去，看着像 bug）
     for (var pi = 0; pi < this.platforms.length; pi++) {
       var pl = this.platforms[pi];
+      if (pl.type === 'turtle') {
+        // r15 乌龟浮台：随波上下起伏（站着的猴由下方"贴台"逻辑带着走）
+        if (pl.y0 === undefined) pl.y0 = pl.y;
+        pl.y = pl.y0 + Math.sin(this.time * (pl.bobSpd || 1.2) + (pl.ph || 0)) * (pl.bobA || 4);
+        continue;
+      }
       if (!pl.mv && pl.type !== 'float') continue;
       if (pl.x0 === undefined) { pl.x0 = pl.x; pl.amp = 30; pl.spd = 1 / 3; pl.ph = 0; }
       var nx = pl.x0 + pl.amp * tri01(this.time * pl.spd + pl.ph);
@@ -1345,6 +1367,13 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
     if (lead > this.maxX) {
       this.maxX = lead;
       this.distance = Math.max(0, Math.floor((this.maxX - 200) / 2.2));
+    }
+    // r15 关卡里程碑：每 MILESTONE 米进一关（过关浮字 + milestone 事件）
+    var mile = Math.floor(this.distance / CFG.MILESTONE);
+    if (mile > (this.milestone || 0)) {
+      this.milestone = mile;
+      this._float(this.camX + CFG.W / 2, 160, '第 ' + (mile + 1) + ' 关！', '#f08c00');
+      this.emit('milestone', { level: mile + 1 });
     }
     this.score = this.distance + this.coins * 10 + this.rescues * 30 + this.bonus;
 
@@ -2160,6 +2189,9 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
 
     ctx.restore();
     ctx.restore();
+
+    // r15 顶部关卡进度条（屏幕空间，最后画保证在最上层）
+    this._progress(g);
   };
 
   Renderer.prototype._cloud = function (x, y, s) {
@@ -2313,6 +2345,39 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
         ctx.fillText('浮台', acx, p.y - 18);
       } else if (p.type === 'ice') {
         this._slabPillars(p, bottom, COL.ice, COL.iceEdge, 12);
+      } else if (p.type === 'turtle') {
+        // r15 水面乌龟：随波起伏的救生台——龟壳 + 甲纹 + 探头 + 水纹
+        var tcx = p.x + p.w / 2;
+        ctx.save();
+        ctx.translate(tcx, p.y);
+        ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        if (ctx.ellipse) ctx.ellipse(0, 7, p.w * 0.62, 5, 0, 0, Math.PI * 2); else ctx.arc(0, 7, p.w * 0.5, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = '#5da96b';
+        circle(ctx, p.w / 2 + 7, -3, 6.5);
+        ctx.fill();
+        ctx.fillStyle = '#22301f';
+        circle(ctx, p.w / 2 + 9.5, -5, 1.4);
+        ctx.fill();
+        ctx.fillStyle = '#2e7d46';
+        ctx.beginPath();
+        if (ctx.ellipse) ctx.ellipse(0, 0, p.w / 2, 11, 0, 0, Math.PI * 2); else ctx.arc(0, 0, p.w * 0.4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#1d5a30';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+        ctx.lineWidth = 1.5;
+        for (var hx = -p.w / 2 + 12; hx < p.w / 2 - 6; hx += 14) {
+          ctx.beginPath(); ctx.moveTo(hx, -8); ctx.lineTo(hx + 4, 8); ctx.stroke();
+        }
+        ctx.fillStyle = 'rgba(255,255,255,0.35)';
+        ctx.beginPath();
+        if (ctx.ellipse) ctx.ellipse(-6, -5, p.w * 0.2, 3.2, -0.2, 0, Math.PI * 2); else ctx.arc(-6, -5, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
       } else {
         // 石板 + 柱状支撑：平台是"桥板"，下面留出空间让落水的猴子在柱子间飘荡
         this._slabPillars(p, bottom, COL.dirt, COL.grass, 22, true);
@@ -2359,8 +2424,8 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
         var pcx2 = (p.pad0 === undefined ? p.x + p.w * 0.30 : p.pad0) + ((p.pad1 === undefined ? p.x + p.w * 0.70 : p.pad1) - (p.pad0 === undefined ? p.x + p.w * 0.30 : p.pad0)) / 2;
         ctx.fillStyle = '#f1e8d8';
         ctx.fillRect(pcx2 - 7, p.y - 12, 14, bottom - p.y);
-      } else if (p.type === 'float') {
-        continue;   // 浮台悬空没有柱子
+      } else if (p.type === 'float' || p.type === 'turtle') {
+        continue;   // 浮台悬空、乌龟浮在水面，都没有柱子
       } else {
         var slabH = p.type === 'ice' ? 12 : 22;
         ctx.fillStyle = p.type === 'ice' ? COL.ice : COL.dirtDark;
@@ -2719,29 +2784,65 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
     var ctx = this.ctx;
     var a = g.monkeys[0], b = g.monkeys[1];
     var ax = a.x, ay = a.y - 26, bx = b.x, by = b.y - 26;
-    var mx = (ax + bx) / 2, my = (ay + by) / 2;
-    var sag = 16 + Math.sin(t * 3) * 2.5;
     var dx = bx - ax, dy = by - ay;
     var len = Math.sqrt(dx * dx + dy * dy) || 1;
+    var rest = g.ropeRest();
+    var over = len - rest;
+    var mx = (ax + bx) / 2, my = (ay + by) / 2;
+    // r15 弹性绳视觉：拉伸比 0(松)→1(到弹性上限)。绷得越紧越细、越亮、越偏红，
+    // 松的时候自然下垂——绳子的"软弹感"一眼可见
+    var stretchT = Math.max(0, Math.min(1, over / (rest * ((CFG.ROPE_STRETCH || 3.4) - 1))));
+    var slackT = Math.max(0, Math.min(1, -over / 60));
+    var sag = 6 + slackT * 18 + Math.sin(t * 3) * 2.5;
     var nx = -dy / len, ny = dx / len;
-    var taut = Math.max(0, len - g.ropeRest()) > 2;
-    var wob = taut ? 0 : 1;
+    var wob = over > -4 ? 0 : 1;
     var cxp = mx + nx * sag * wob, cyp = my + ny * sag * wob;
 
-    ctx.strokeStyle = COL.ropeDark;
-    ctx.lineWidth = taut ? 6.5 : 5;
+    ctx.strokeStyle = mixHex(COL.ropeDark, '#c92a2a', stretchT);
+    ctx.lineWidth = 6.5 - stretchT * 2.2;
     ctx.lineCap = 'round';
     ctx.beginPath();
     ctx.moveTo(ax, ay);
     ctx.quadraticCurveTo(cxp, cyp, bx, by);
     ctx.stroke();
-    // 绷紧（摆荡助力生效）时绳子提亮，给"借绳发力"一个视觉确认
-    ctx.strokeStyle = taut ? '#ffe08a' : COL.rope;
-    ctx.lineWidth = taut ? 4 : 3;
+    ctx.strokeStyle = stretchT > 0.04 ? mixHex(COL.rope, '#ff8787', stretchT)
+      : (over > -4 ? '#ffe08a' : COL.rope);
+    ctx.lineWidth = Math.max(1.6, 4 - stretchT * 2);
     ctx.beginPath();
     ctx.moveTo(ax, ay);
     ctx.quadraticCurveTo(cxp, cyp, bx, by);
     ctx.stroke();
+  };
+
+  // r15 顶部关卡进度条：当前关 + 关内进度（屏幕空间，画在最上层）
+  Renderer.prototype._progress = function (g) {
+    var ctx = this.ctx;
+    var M = CFG.MILESTONE || 500;
+    var dist = g.distance || 0;
+    var lv = Math.floor(dist / M) + 1;
+    var frac = (dist % M) / M;
+    var bw = 150, bh = 7, bx = (CFG.W - bw) / 2, by = 16;
+    ctx.save();
+    ctx.globalAlpha = 0.88;
+    ctx.fillStyle = 'rgba(0,0,0,0.28)';
+    roundRect(ctx, bx - 6, by - 6, bw + 12, bh + 12, 9);
+    ctx.fill();
+    ctx.fillStyle = '#ffd43b';
+    roundRect(ctx, bx, by, Math.max(bw * frac, 4), bh, 4);
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(bx + bw - 1.5, by - 4, 3, bh + 8);
+    ctx.beginPath();
+    ctx.moveTo(bx + bw + 1.5, by - 4);
+    ctx.lineTo(bx + bw + 12, by - 0.5);
+    ctx.lineTo(bx + bw + 1.5, by + 3);
+    ctx.closePath();
+    ctx.fill();
+    ctx.font = 'bold 10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText('第 ' + lv + ' 关 · ' + dist + 'm', CFG.W / 2, by + bh + 17);
+    ctx.restore();
   };
 
   // 卡通小猴
