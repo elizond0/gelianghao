@@ -725,7 +725,7 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
 <script>
 /* eslint-disable */
 /* 哥俩好 · 网页端单文件打包产物 —— 由 scripts/build-web-bundle.js 自动生成，请勿手改 */
-/* 生成时间：2026-10-27T15:38:31.655Z */
+/* 生成时间：2026-10-28T07:53:53.686Z */
 (function () {
   'use strict';
   var __mods = {};
@@ -818,12 +818,14 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
     { name: '暴风雪山顶', snow: 1 }
   ];
 
+  // r12 实机反馈调参：平台整体加宽、间距收短（观感"平台过短、间距过长"），
+  // 同时保留每档内部浮动（宽窄/长短错落，不做全窄全长）
   var LEVELS = [
-    { until: 900,  gapMin: 55,  gapMax: 105, platMin: 80,  platMax: 128, obs: 0,    spike: false, ice: false },
-    { until: 2000, gapMin: 70,  gapMax: 130, platMin: 70,  platMax: 118, obs: 0.35, spike: false, ice: false },
-    { until: 3400, gapMin: 85,  gapMax: 155, platMin: 64,  platMax: 108, obs: 0.55, spike: true,  ice: false },
-    { until: 5200, gapMin: 90,  gapMax: 152, platMin: 58,  platMax: 100, obs: 0.7,  spike: true,  ice: true  },
-    { until: 1e9,  gapMin: 95,  gapMax: 162, platMin: 54,  platMax: 96,  obs: 0.85, spike: true,  ice: true  }
+    { until: 900,  gapMin: 48,  gapMax: 95,  platMin: 92,  platMax: 148, obs: 0,    spike: false, ice: false },
+    { until: 2000, gapMin: 58,  gapMax: 112, platMin: 84,  platMax: 138, obs: 0.35, spike: false, ice: false },
+    { until: 3400, gapMin: 66,  gapMax: 126, platMin: 78,  platMax: 128, obs: 0.55, spike: true,  ice: false },
+    { until: 5200, gapMin: 72,  gapMax: 134, platMin: 72,  platMax: 118, obs: 0.7,  spike: true,  ice: true  },
+    { until: 1e9,  gapMin: 78,  gapMax: 140, platMin: 66,  platMax: 110, obs: 0.85, spike: true,  ice: true  }
   ];
 
   // 抛射参数：水平 vx 决定落点，竖直 vy 决定弧高（蓄力越大跳得越高）
@@ -995,10 +997,10 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
       var y = CFG.GROUND_Y + Math.round((r() * 2 - 1) * ySpan);
       var style = this._segStyle;
       if (style === 'airy') {
-        // 大空档：逼近单跳极限（满蓄力水平位移 ≈174px）但绝不越过——
-        // 空档 >174 就是物理上跳不过去的死局（荡绳助力只在两只都离地时才有），
-        // 所以硬顶 168，留 6px 余量，再配宽落点降低精度要求
-        gap = Math.round(Math.min(168, gap * 1.45 + 24));
+        // 大空档：比常规段远一截但留足余量（满蓄力实际水平位移 ≈300px，
+        // 旧注释的"单跳极限 174"算的是起跳初速度口径，不是水平位移）。
+        // r12 实机反馈：观感"间距过长"， airy 硬顶从 168 收到 150
+        gap = Math.round(Math.min(150, gap * 1.45 + 24));
         pw = Math.max(pw, 96);
       } else if (style === 'steps') {
         // 台阶：坑短，但高度一上一下交错，节奏完全不同
@@ -1013,8 +1015,8 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
         // 宽台：喘息段，顺带刷币
         pw = Math.min(230, Math.round(pw * 1.7));
       }
-      // 全局可达性护栏：任何风格组合出的空档都不得超过单跳极限（174px）减余量
-      gap = Math.min(gap, 168);
+      // 全局可达性护栏：任何风格组合出的空档都不得超过硬顶
+      gap = Math.min(gap, 150);
       y = clamp(y, CFG.GROUND_Y - 44, CFG.GROUND_Y + 34);
       var p = { x: last.x + last.w + gap, w: pw, y: y, type: 'normal' };
       if (L.ice && r() < 0.22) p.type = 'ice';
@@ -1041,7 +1043,7 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
         var fx = (r() < 0.5 ? -1 : 1) * lerp(CFG.WIND_F_MIN, CFG.WIND_F_MAX, r());
         // 公平性护栏：空档本来就接近单跳极限时，风只准顺吹（帮玩家飞过去），
         // 否则顶风 + 大空档 = 又一个物理死局
-        if (gap > 150) fx = Math.abs(fx);
+        if (gap > 135) fx = Math.abs(fx);   // 空档偏大时风只准顺风（公平护栏）
         this.winds.push({
           x0: Math.round(last.x + last.w - 30),
           x1: Math.round(p.x + 30),
@@ -2961,7 +2963,10 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
     // 采样到"落回平台/水面"为止。用 1/120s 数字积分（和 projectLanding/update 同一套物理），
     // 否则风区里瞄准线会"瞄 A 落 B"；落空时按水面再低 16px 算
     var missY = CFG.WATER_Y - 4;
-    var targetDrop = m.y - (hit ? landY : missY);
+    // 截止条件：下落段一碰到"落点高度"（平台面或水面）就停。
+    // 旧写法 sy0-(m.y-24)>=targetDrop 展开后是 2*m.y-24-landY，
+    // 落点比起跳点低得多（水面/低台）时线会在半空被截断——"虚线时常不显示"的根因
+    var stopY = hit ? landY : missY;
     var sx0 = m.x, sy0 = m.y - 24, svx = vx, svy = vy;
     var pts = [[sx0, sy0]];
     var sdt = 1 / 120;
@@ -2972,7 +2977,7 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
       sx0 += svx * sdt;
       sy0 += svy * sdt;
       pts.push([sx0, sy0]);
-      if (svy > 0 && sy0 - (m.y - 24) >= targetDrop) break;
+      if (svy > 0 && sy0 >= stopY) break;
     }
     function strokePath(color, w) {
       ctx.strokeStyle = color;
@@ -3004,7 +3009,10 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
       ctx.font = 'bold 12px sans-serif';
       ctx.textAlign = 'center';
       ctx.fillStyle = 'rgba(0,0,0,0.45)';
-      var tip = '再按久一点';
+      // 蓄力是三角波（满蓄后回滚），"按久一点"在回滚下降段是错误指导——
+      // 这时该松手重按，别让玩家越按越近
+      var T = CFG.MAX_POWER_MS / 1000;
+      var tip = (m.chargeT % (2 * T)) > T ? '蓄过头了，松手重来' : '再按久一点';
       var tw = ctx.measureText(tip).width;
       roundRect(ctx, target - tw / 2 - 7, landY - 34, tw + 14, 18, 9);
       ctx.fill();
