@@ -40,6 +40,10 @@
     LIFT_T: 200,          // 把地面伙伴拽离平台的张力阈值（低门槛：一起飞才有原版味）
     ROPE_FLYER_SHARE: 0.15, // 飞行猴自身感受到的张力比例（它在"拽人"，不被反向猛拽）
     ROPE_STRETCH: 3.4,    // 绳子最大拉伸倍数（rest 的倍数），超出硬收
+    // ---- r15：水面乌龟浮台 + 关卡里程碑 ----
+    TURTLE_CHANCE: 0.3,   // 够宽的坑里刷救生乌龟的概率
+    TURTLE_W: 58,         // 龟背宽
+    MILESTONE: 500,       // 每推进 500m 进入下一关（进度条 + 过关提示）
     COYOTE: 0.09,       // 土狼时间：离开平台后这么久内仍可起跳（秒）
     JUMP_BUFFER: 0.15,  // 跳跃缓冲：落地前这么久内按的键，落地立即开始蓄力（秒）
     PATIENCE: 5.5,      // 落水后挂在绳上能荡/被救的耐心时间（秒）
@@ -73,7 +77,7 @@
   };
 
   // 版本号：日期 + 当日构建序号，首页展示
-  var VERSION = 'v2026.10.27-r8';
+  var VERSION = 'v2026.10.28-r15';
 
   // 山体主题：由 levelAt() 的档位驱动，渲染层读同一个下标做配色/飘雪
   // （面包和年糕的"山脚 -> 雪线 -> 暴风雪山顶"爬升感）
@@ -165,6 +169,7 @@
     this.state = 'ready';
     this.distance = 0;
     this.maxX = 0;
+    this.milestone = 0;       // r15：已进入的关卡（每 MILESTONE 米 +1）
     this.coins = 0;
     this.rescues = 0;
     this.score = 0;
@@ -287,6 +292,17 @@
       y = clamp(y, CFG.GROUND_Y - 44, CFG.GROUND_Y + 34);
       var p = { x: last.x + last.w + gap, w: pw, y: y, type: 'normal' };
       if (L.ice && r() < 0.22) p.type = 'ice';
+
+      // r15 水面乌龟：够宽的坑里浮一只乌龟当救生台——跳短了落龟背还能再起跳，
+      // "踩空必死"的大坑变成有第二次机会（进山脚第一档之后就刷）
+      if (gap >= 80 && li >= 1 && r() < CFG.TURTLE_CHANCE) {
+        this.platforms.push({
+          x: Math.round(last.x + last.w + gap / 2 - CFG.TURTLE_W / 2),
+          w: CFG.TURTLE_W, y: CFG.WATER_Y - 12, y0: CFG.WATER_Y - 12,
+          type: 'turtle',
+          bobA: 4 + r() * 3, bobSpd: 0.9 + r() * 0.8, ph: r() * 6.28
+        });
+      }
 
       // 移动浮台（山腰以上）：绕初始点做三角波巡逻，位置由时间决定、两端一致
       var li = levelIdx(p.x);
@@ -528,6 +544,12 @@
     // （不载猴的话猴会悬在原地被台子甩出去，看着像 bug）
     for (var pi = 0; pi < this.platforms.length; pi++) {
       var pl = this.platforms[pi];
+      if (pl.type === 'turtle') {
+        // r15 乌龟浮台：随波上下起伏（站着的猴由下方"贴台"逻辑带着走）
+        if (pl.y0 === undefined) pl.y0 = pl.y;
+        pl.y = pl.y0 + Math.sin(this.time * (pl.bobSpd || 1.2) + (pl.ph || 0)) * (pl.bobA || 4);
+        continue;
+      }
       if (!pl.mv && pl.type !== 'float') continue;
       if (pl.x0 === undefined) { pl.x0 = pl.x; pl.amp = 30; pl.spd = 1 / 3; pl.ph = 0; }
       var nx = pl.x0 + pl.amp * tri01(this.time * pl.spd + pl.ph);
@@ -597,6 +619,13 @@
     if (lead > this.maxX) {
       this.maxX = lead;
       this.distance = Math.max(0, Math.floor((this.maxX - 200) / 2.2));
+    }
+    // r15 关卡里程碑：每 MILESTONE 米进一关（过关浮字 + milestone 事件）
+    var mile = Math.floor(this.distance / CFG.MILESTONE);
+    if (mile > (this.milestone || 0)) {
+      this.milestone = mile;
+      this._float(this.camX + CFG.W / 2, 160, '第 ' + (mile + 1) + ' 关！', '#f08c00');
+      this.emit('milestone', { level: mile + 1 });
     }
     this.score = this.distance + this.coins * 10 + this.rescues * 30 + this.bonus;
 
