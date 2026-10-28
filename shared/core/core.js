@@ -895,9 +895,12 @@
       var eff = over - CFG.ROPE_SLACK;
       if (eff > 0) {
         var F = Math.min(eff * CFG.ROPE_K, CFG.ROPE_F_MAX);   // 张力（加速度量纲）
-        // 拉伸超过弹性上限后弹簧急剧变硬（不瞬移，只是再也拉不长）
         var stretchMax = rest * CFG.ROPE_STRETCH;
-        if (d > stretchMax) F = Math.min(F + (d - stretchMax) * 25, 2000);
+        // r16 对标原版：绳子是软绳不是钢弹簧。超过弹性上限后不再"更硬的弹簧"，
+        // 而是绳长约束——位置投影回圆上、消掉向外径向速度、保留切向速度，
+        // 双猴自然会像钟摆一样荡起来（甩猴手感的核心）
+        var ropeTaut = d > stretchMax;
+        if (ropeTaut) F = CFG.ROPE_F_MAX;
         // 空中的猴受张力（被拉向对方）；对方湿挂时由单摆处理，不出这个力
         for (var ri = 0; ri < 2; ri++) {
           var rm = ms[ri];
@@ -909,6 +912,25 @@
           rm.vx += dirX * Fm * share * dt;
           rm.vy += dirY * Fm * share * dt;
         }
+        // r16 绳长软约束：绷满后把悬空猴拉回 stretchMax 圆上（切向速度保留 => 荡）
+        if (ropeTaut) {
+          var excess = d - stretchMax;
+          for (var ci = 0; ci < 2; ci++) {
+            var cm = ms[ci], co = ms[1 - ci];
+            if (cm.grounded || cm.wetT > 0 || co.wetT > 0) continue;
+            if (cm.charging) continue;   // r14 精神：按住飞行的是主动拽人方，绝不被绳拖垮
+            var sgn = ci === 0 ? 1 : -1;                 // A 沿 +n 朝 B 收，B 反向
+            var share = (co.grounded || co.wetT > 0) ? 1 : 0.5;   // 双悬空各收一半
+            // 每帧修正量限幅 12px：温和拉回，不瞬移也不拖死跳跃（r11 教训）
+            var pull = Math.min(excess * share, 12);
+            cm.x += sgn * nx * pull;
+            cm.y += sgn * ny * pull;
+            // 消掉"向外"的径向速度（保留切向 => 摆而不是对撞）。
+            // 注意向外方向：A 是 -n，B 是 +n（= -sgn * n）
+            var vr2 = -sgn * (cm.vx * nx + cm.vy * ny);
+            if (vr2 > 0) { cm.vx += sgn * vr2 * nx; cm.vy += sgn * vr2 * ny; }
+          }
+        }
         // 原版标志手感：飞高拉远后张力足够大，把站着的伙伴直接拽离平台
         for (var li = 0; li < 2; li++) {
           var gm = ms[li], fo = ms[1 - li];
@@ -918,8 +940,11 @@
           if (-fy > CFG.LIFT_T && fo.y < gm.y - 40) {
             gm.grounded = false;
             gm.squash = 1.12;
-            gm.vx += (fo.x - gm.x) / d * F * dt;
-            gm.vy += fy * dt * 2 - 80;                // 拔离平台并给一把向上的初速
+            // r16 原版手感：被拽起的猴沿绳的"切向"荡出去，不是直着吸向对方
+            var ttx = -ny, tty = nx;                  // 切向单位向量
+            if (ttx < 0) { ttx = -ttx; tty = -tty; }  // 恒朝前进方向（+x）
+            gm.vx += ttx * 130;
+            gm.vy += tty * 130 * 0.35 + fy * dt * 2 - 80;   // 拔离平台 + 向上初速 + 切向甩
             this.emit('lift', { idx: gm.idx, by: fo.idx });
           }
         }
