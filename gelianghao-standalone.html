@@ -725,7 +725,7 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
 <script>
 /* eslint-disable */
 /* 哥俩好 · 网页端单文件打包产物 —— 由 scripts/build-web-bundle.js 自动生成，请勿手改 */
-/* 生成时间：2026-10-28T08:14:43.728Z */
+/* 生成时间：2026-10-28T08:24:42.566Z */
 (function () {
   'use strict';
   var __mods = {};
@@ -1086,8 +1086,12 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
         this._nextCPX += CFG.CP_SPACING;
       }
 
+      // 装饰树/灌木：蘑菇台别挡住红伞（r13 实拍发现树正好盖住蘑菇垫，
+      // 玩家看不见"哪段能弹"），垫区±10px 内不刷
       for (var d = 0; d < 2; d++) {
-        this.decos.push({ x: Math.round(p.x + r() * pw), y: y, kind: r() < 0.5 ? 'tree' : 'bush', s: 0.7 + r() * 0.6 });
+        var dx = Math.round(p.x + r() * pw);
+        if (p.type === 'spring' && dx > p.pad0 - 12 && dx < p.pad1 + 12) continue;
+        this.decos.push({ x: dx, y: y, kind: r() < 0.5 ? 'tree' : 'bush', s: 0.7 + r() * 0.6 });
       }
       this.platforms.push(p);
       last = p;
@@ -2237,9 +2241,19 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
         ctx.fillStyle = '#e0524d';
         ctx.beginPath();
         ctx.moveTo(padL + 2, p.y);
-        ctx.quadraticCurveTo(pcx, p.y - 26, padR - 2, p.y);
+        ctx.quadraticCurveTo(pcx, p.y - 34, padR - 2, p.y);
         ctx.closePath();
         ctx.fill();
+        ctx.strokeStyle = '#b03a36';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        // 伞面白色描边高光，草地上也醒目
+        ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(padL + 4, p.y - 2);
+        ctx.quadraticCurveTo(pcx, p.y - 32, padR - 4, p.y - 2);
+        ctx.stroke();
         ctx.fillStyle = '#ffffff';
         circle(ctx, padL + (padR - padL) * 0.22, p.y - 10, 3.4);
         ctx.fill();
@@ -2253,7 +2267,7 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.moveTo(padL + 2, p.y);
-        ctx.quadraticCurveTo(pcx, p.y - 26, padR - 2, p.y);
+        ctx.quadraticCurveTo(pcx, p.y - 34, padR - 2, p.y);
         ctx.stroke();
         ctx.globalAlpha = 1;
       } else if (p.type === 'float') {
