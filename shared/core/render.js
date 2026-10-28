@@ -179,6 +179,9 @@
 
     ctx.restore();
     ctx.restore();
+
+    // r15 顶部关卡进度条（屏幕空间，最后画保证在最上层）
+    this._progress(g);
   };
 
   Renderer.prototype._cloud = function (x, y, s) {
@@ -332,6 +335,39 @@
         ctx.fillText('浮台', acx, p.y - 18);
       } else if (p.type === 'ice') {
         this._slabPillars(p, bottom, COL.ice, COL.iceEdge, 12);
+      } else if (p.type === 'turtle') {
+        // r15 水面乌龟：随波起伏的救生台——龟壳 + 甲纹 + 探头 + 水纹
+        var tcx = p.x + p.w / 2;
+        ctx.save();
+        ctx.translate(tcx, p.y);
+        ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        if (ctx.ellipse) ctx.ellipse(0, 7, p.w * 0.62, 5, 0, 0, Math.PI * 2); else ctx.arc(0, 7, p.w * 0.5, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = '#5da96b';
+        circle(ctx, p.w / 2 + 7, -3, 6.5);
+        ctx.fill();
+        ctx.fillStyle = '#22301f';
+        circle(ctx, p.w / 2 + 9.5, -5, 1.4);
+        ctx.fill();
+        ctx.fillStyle = '#2e7d46';
+        ctx.beginPath();
+        if (ctx.ellipse) ctx.ellipse(0, 0, p.w / 2, 11, 0, 0, Math.PI * 2); else ctx.arc(0, 0, p.w * 0.4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#1d5a30';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+        ctx.lineWidth = 1.5;
+        for (var hx = -p.w / 2 + 12; hx < p.w / 2 - 6; hx += 14) {
+          ctx.beginPath(); ctx.moveTo(hx, -8); ctx.lineTo(hx + 4, 8); ctx.stroke();
+        }
+        ctx.fillStyle = 'rgba(255,255,255,0.35)';
+        ctx.beginPath();
+        if (ctx.ellipse) ctx.ellipse(-6, -5, p.w * 0.2, 3.2, -0.2, 0, Math.PI * 2); else ctx.arc(-6, -5, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
       } else {
         // 石板 + 柱状支撑：平台是"桥板"，下面留出空间让落水的猴子在柱子间飘荡
         this._slabPillars(p, bottom, COL.dirt, COL.grass, 22, true);
@@ -378,8 +414,8 @@
         var pcx2 = (p.pad0 === undefined ? p.x + p.w * 0.30 : p.pad0) + ((p.pad1 === undefined ? p.x + p.w * 0.70 : p.pad1) - (p.pad0 === undefined ? p.x + p.w * 0.30 : p.pad0)) / 2;
         ctx.fillStyle = '#f1e8d8';
         ctx.fillRect(pcx2 - 7, p.y - 12, 14, bottom - p.y);
-      } else if (p.type === 'float') {
-        continue;   // 浮台悬空没有柱子
+      } else if (p.type === 'float' || p.type === 'turtle') {
+        continue;   // 浮台悬空、乌龟浮在水面，都没有柱子
       } else {
         var slabH = p.type === 'ice' ? 12 : 22;
         ctx.fillStyle = p.type === 'ice' ? COL.ice : COL.dirtDark;
@@ -738,29 +774,65 @@
     var ctx = this.ctx;
     var a = g.monkeys[0], b = g.monkeys[1];
     var ax = a.x, ay = a.y - 26, bx = b.x, by = b.y - 26;
-    var mx = (ax + bx) / 2, my = (ay + by) / 2;
-    var sag = 16 + Math.sin(t * 3) * 2.5;
     var dx = bx - ax, dy = by - ay;
     var len = Math.sqrt(dx * dx + dy * dy) || 1;
+    var rest = g.ropeRest();
+    var over = len - rest;
+    var mx = (ax + bx) / 2, my = (ay + by) / 2;
+    // r15 弹性绳视觉：拉伸比 0(松)→1(到弹性上限)。绷得越紧越细、越亮、越偏红，
+    // 松的时候自然下垂——绳子的"软弹感"一眼可见
+    var stretchT = Math.max(0, Math.min(1, over / (rest * ((CFG.ROPE_STRETCH || 3.4) - 1))));
+    var slackT = Math.max(0, Math.min(1, -over / 60));
+    var sag = 6 + slackT * 18 + Math.sin(t * 3) * 2.5;
     var nx = -dy / len, ny = dx / len;
-    var taut = Math.max(0, len - g.ropeRest()) > 2;
-    var wob = taut ? 0 : 1;
+    var wob = over > -4 ? 0 : 1;
     var cxp = mx + nx * sag * wob, cyp = my + ny * sag * wob;
 
-    ctx.strokeStyle = COL.ropeDark;
-    ctx.lineWidth = taut ? 6.5 : 5;
+    ctx.strokeStyle = mixHex(COL.ropeDark, '#c92a2a', stretchT);
+    ctx.lineWidth = 6.5 - stretchT * 2.2;
     ctx.lineCap = 'round';
     ctx.beginPath();
     ctx.moveTo(ax, ay);
     ctx.quadraticCurveTo(cxp, cyp, bx, by);
     ctx.stroke();
-    // 绷紧（摆荡助力生效）时绳子提亮，给"借绳发力"一个视觉确认
-    ctx.strokeStyle = taut ? '#ffe08a' : COL.rope;
-    ctx.lineWidth = taut ? 4 : 3;
+    ctx.strokeStyle = stretchT > 0.04 ? mixHex(COL.rope, '#ff8787', stretchT)
+      : (over > -4 ? '#ffe08a' : COL.rope);
+    ctx.lineWidth = Math.max(1.6, 4 - stretchT * 2);
     ctx.beginPath();
     ctx.moveTo(ax, ay);
     ctx.quadraticCurveTo(cxp, cyp, bx, by);
     ctx.stroke();
+  };
+
+  // r15 顶部关卡进度条：当前关 + 关内进度（屏幕空间，画在最上层）
+  Renderer.prototype._progress = function (g) {
+    var ctx = this.ctx;
+    var M = CFG.MILESTONE || 500;
+    var dist = g.distance || 0;
+    var lv = Math.floor(dist / M) + 1;
+    var frac = (dist % M) / M;
+    var bw = 150, bh = 7, bx = (CFG.W - bw) / 2, by = 16;
+    ctx.save();
+    ctx.globalAlpha = 0.88;
+    ctx.fillStyle = 'rgba(0,0,0,0.28)';
+    roundRect(ctx, bx - 6, by - 6, bw + 12, bh + 12, 9);
+    ctx.fill();
+    ctx.fillStyle = '#ffd43b';
+    roundRect(ctx, bx, by, Math.max(bw * frac, 4), bh, 4);
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(bx + bw - 1.5, by - 4, 3, bh + 8);
+    ctx.beginPath();
+    ctx.moveTo(bx + bw + 1.5, by - 4);
+    ctx.lineTo(bx + bw + 12, by - 0.5);
+    ctx.lineTo(bx + bw + 1.5, by + 3);
+    ctx.closePath();
+    ctx.fill();
+    ctx.font = 'bold 10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText('第 ' + lv + ' 关 · ' + dist + 'm', CFG.W / 2, by + bh + 17);
+    ctx.restore();
   };
 
   // 卡通小猴
