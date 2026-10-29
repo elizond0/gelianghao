@@ -1,6 +1,6 @@
 /* eslint-disable */
 /* 哥俩好 · 网页端单文件打包产物 —— 由 scripts/build-web-bundle.js 自动生成，请勿手改 */
-/* 生成时间：2026-10-29T13:03:40.966Z */
+/* 生成时间：2026-10-29T13:24:03.671Z */
 (function () {
   'use strict';
   var __mods = {};
