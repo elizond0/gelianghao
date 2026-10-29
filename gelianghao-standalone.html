@@ -725,7 +725,7 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
 <script>
 /* eslint-disable */
 /* 哥俩好 · 网页端单文件打包产物 —— 由 scripts/build-web-bundle.js 自动生成，请勿手改 */
-/* 生成时间：2026-10-29T07:27:47.291Z */
+/* 生成时间：2026-10-29T12:25:47.829Z */
 (function () {
   'use strict';
   var __mods = {};
@@ -766,7 +766,7 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
   var CFG = {
     W: 375,
     H: 667,
-    GROUND_Y: 430,      // 平台基准高度（整体抬高，给下方荡猴留空间）
+    GROUND_Y: 370,      // 平台基准高度（r20：整体再抬 60px，下方荡猴/落水空间更大）
     WATER_Y: 630,       // 水面：贴着画面最底部（H=667）
     GRAVITY: 1250,
     MIN_JUMP: 24,
@@ -788,6 +788,8 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
     LIFT_T: 200,          // 把地面伙伴拽离平台的张力阈值（低门槛：一起飞才有原版味）
     ROPE_FLYER_SHARE: 0.15, // 飞行猴自身感受到的张力比例（它在"拽人"，不被反向猛拽）
     ROPE_STRETCH: 3.4,    // 绳子最大拉伸倍数（rest 的倍数），超出硬收
+    ROPE_MAX: 380,        // r20：绳子绝对最大长度（px），下坠再快也拉不超限
+    ROPE_PULL_MAX: 20,    // r20：绳长修正每帧限幅（px）——> 任何外向速度(VY_MAX/60≈16.3)，保证收敛又不瞬移（r11 教训）
     // ---- r15：水面乌龟浮台 + 关卡里程碑 ----
     TURTLE_CHANCE: 0.3,   // 够宽的坑里刷救生乌龟的概率
     TURTLE_W: 58,         // 龟背宽
@@ -805,7 +807,7 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
     GOLD_CHANCE: 0.13,    // 金香蕉生成概率（挂在跳跃顶点高度，要跳起来才吃得到）
     GOLD_BONUS: 50,
     SWING_LIFT: 2.6,      // 绳子绷紧且下方那只下落时，把它往上悠的加速度系数
-    MAX_FALLS_PER_CP: 3,  // 同一检查点连续坠落 3 次 -> 判定卡关，结算（防焊死）
+    // r20：MAX_FALLS_PER_CP 卡关结算已废除——落水/平台下永不结束游戏，耗尽一律回检查点
     BOTH_WET_DELAY: 0.9,  // 双落水后停顿这么久再回检查点/结算（给"完蛋感"留表演时间）
     // ---- 二期：面包和年糕式地形 2.0 ----
     MV_CHANCE: 0.18,      // 移动浮台概率（仅山腰以上生成）
@@ -825,7 +827,7 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
   };
 
   // 版本号：日期 + 当日构建序号，首页展示
-  var VERSION = 'v2026.10.29-r19';
+  var VERSION = 'v2026.10.29-r20';
 
   // 山体主题：由 levelAt() 的档位驱动，渲染层读同一个下标做配色/飘雪
   // （面包和年糕的"山脚 -> 雪线 -> 暴风雪山顶"爬升感）
@@ -1657,7 +1659,8 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
         // r16 对标原版：绳子是软绳不是钢弹簧。超过弹性上限后不再"更硬的弹簧"，
         // 而是绳长约束——位置投影回圆上、消掉向外径向速度、保留切向速度，
         // 双猴自然会像钟摆一样荡起来（甩猴手感的核心）
-        var ropeTaut = d > stretchMax;
+        var ropeLim = Math.min(stretchMax, CFG.ROPE_MAX);   // r20：绝对上限兜底
+        var ropeTaut = d > ropeLim;
         if (ropeTaut) F = CFG.ROPE_F_MAX;
         // 空中的猴受张力（被拉向对方）；对方湿挂时由单摆处理，不出这个力
         for (var ri = 0; ri < 2; ri++) {
@@ -1670,17 +1673,19 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
           rm.vx += dirX * Fm * share * dt;
           rm.vy += dirY * Fm * share * dt;
         }
-        // r16 绳长软约束：绷满后把悬空猴拉回 stretchMax 圆上（切向速度保留 => 荡）
+        // r16 绳长约束（r20 调参）：绷满后把悬空猴拉回上限圆（切向速度保留 => 荡）。
+        // 12px/帧旧限幅会被高速下坠绕过（坠落 ~16.3px/帧 > 12px/帧 = 净外漂，绳越拉越长）；
+        // 纯硬投影又会瞬移（一次拉近千 px，r11 教训）。取 ROPE_PULL_MAX=20：
+        // 大于任何外向速度（保证绳长收敛在限内）又不会一帧瞬移
         if (ropeTaut) {
-          var excess = d - stretchMax;
+          var excess = d - ropeLim;
           for (var ci = 0; ci < 2; ci++) {
             var cm = ms[ci], co = ms[1 - ci];
             if (cm.grounded || cm.wetT > 0 || co.wetT > 0) continue;
             if (cm.charging) continue;   // r14 精神：按住飞行的是主动拽人方，绝不被绳拖垮
             var sgn = ci === 0 ? 1 : -1;                 // A 沿 +n 朝 B 收，B 反向
             var share = (co.grounded || co.wetT > 0) ? 1 : 0.5;   // 双悬空各收一半
-            // 每帧修正量限幅 12px：温和拉回，不瞬移也不拖死跳跃（r11 教训）
-            var pull = Math.min(excess * share, 12);
+            var pull = Math.min(excess * share, CFG.ROPE_PULL_MAX);   // r20：限幅拉回（见上）
             cm.x += sgn * nx * pull;
             cm.y += sgn * ny * pull;
             // 消掉"向外"的径向速度（保留切向 => 摆而不是对撞）。
@@ -1900,22 +1905,20 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
   Game.prototype._onWetExpired = function (m) {
     if (this.state !== 'playing') return;
     this._float(m.x, CFG.WATER_Y - 64, '没抓稳…', '#e8590c');
+    // r20：落水/平台下永不结束游戏——耗尽一律回检查点（没打过旗回起始平台）
     var cp = this.checkpoints[this._lastCPIdx];
-    if (cp && cp.passed && this.fallsSinceCP < CFG.MAX_FALLS_PER_CP) {
-      this._respawnAt(cp);
-    } else {
-      this._gameOver(this.fallsSinceCP >= CFG.MAX_FALLS_PER_CP ? 'stuck' : 'wet-out');
-    }
+    if (cp && cp.passed) { this._respawnAt(cp); return; }
+    var sp = this.platforms[0];
+    this._respawnAt({ x: sp ? sp.x + sp.w / 2 : 0 });
   };
 
   Game.prototype._onBothWet = function () {
     if (this.state !== 'playing') return;
+    // r20：双落水同样永不结算，一律回检查点/起始平台
     var cp = this.checkpoints[this._lastCPIdx];
-    if (cp && cp.passed && this.fallsSinceCP < CFG.MAX_FALLS_PER_CP) {
-      this._respawnAt(cp);
-    } else {
-      this._gameOver(this.fallsSinceCP >= CFG.MAX_FALLS_PER_CP ? 'stuck' : 'both-wet');
-    }
+    if (cp && cp.passed) { this._respawnAt(cp); return; }
+    var sp = this.platforms[0];
+    this._respawnAt({ x: sp ? sp.x + sp.w / 2 : 0 });
   };
 
   /** 两只猴 + 绳子整体复位到检查点；距离/分数/金香蕉都保留（分是"到过的高度"） */
@@ -2913,7 +2916,8 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
       pts[0].x = ax; pts[0].y = ay; pts[N].x = bx; pts[N].y = by;
     }
     // 张力可视化：两端距离 / 弹性上限 -> 越绷越细越红（沿用 r15 配色映射）
-    var stretchT = Math.max(0, Math.min(1, spanNow / (rest * ((CFG.ROPE_STRETCH || 3.4) - 1))));
+    var ropeLimR = Math.min(rest * ((CFG.ROPE_STRETCH || 3.4)), (CFG.ROPE_MAX || 1e9));   // r20：与物理上限同步
+    var stretchT = Math.max(0, Math.min(1, spanNow / ropeLimR));
     // 平滑折线：过相邻中点的二次贝塞尔
     function strokePath() {
       ctx.beginPath();
