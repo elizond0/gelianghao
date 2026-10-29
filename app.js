@@ -198,6 +198,13 @@
     cv.height = Math.round(rect.height * dpr);
     scale = Math.min(rect.width / CFG.W, rect.height / CFG.H);
     if (renderer.resize) renderer.resize(scale);
+    // r24：把真实视口交给渲染层——等比缩放会在画布上下留白（长屏手机上下各 ~75px），
+    // 不告诉渲染层就会出现"底部一条空地"。渲染层据此把天空/水铺满整块画布。
+    renderer.vp = {
+      w: rect.width, h: rect.height, scale: scale,
+      offX: (rect.width - CFG.W * scale) / 2,
+      offY: (rect.height - CFG.H * scale) / 2
+    };
   }
   window.addEventListener('resize', fit);
 
@@ -222,14 +229,16 @@
     switch (type) {
       case 'jump': sfx.play('jump'); break;
       case 'land': sfx.play('land'); break;
-      case 'wet': sfx.play('wet'); toast('掉坑里了！换另一只跳过坑，把它钓上来', 1700); break;
-      case 'rescue': sfx.play('rescue'); toast('哥俩好！把伙伴钓上来了 +30', 1400); break;
+      // r24（用户反馈）：玩法类（掉坑/救援/金香蕉/过关）不再弹 toast 打断视野——
+      // 画布内已有浮字与粒子反馈，玩法说明也写在"怎么玩"页。系统/联机提示仍保留。
+      case 'wet': sfx.play('wet'); break;
+      case 'rescue': sfx.play('rescue'); break;
       case 'coin': sfx.play('coin'); break;
       case 'hit': sfx.play('hit'); break;
       case 'switch': sfx.play('switch'); break;
       case 'perfect': sfx.play('perfect'); break;
-      case 'gold': sfx.play('gold'); toast('金香蕉 +50！', 1200); break;
-      case 'checkpoint': sfx.play('checkpoint'); toast('第 ' + ((d && d.level) || 1) + ' 关完成！+100', 1600); break;
+      case 'gold': sfx.play('gold'); break;
+      case 'checkpoint': sfx.play('checkpoint'); break;
       case 'respawn': sfx.play('respawn'); break;
       case 'spring': sfx.play('spring'); break;
       case 'gameover': onGameOver(d); break;
@@ -871,6 +880,7 @@
   window.GLH = {
     get game() { return game; },
     get state() { return state; },
+    get renderer() { return renderer; },   // r24：调试出口——缩放/视野参数排查用
     canPress: canPress,
     startSolo: startSoloGame,
     pressStart: function () { if (game) game.pressStart(); },
