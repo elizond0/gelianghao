@@ -229,7 +229,7 @@
       case 'switch': sfx.play('switch'); break;
       case 'perfect': sfx.play('perfect'); break;
       case 'gold': sfx.play('gold'); toast('金香蕉 +50！', 1200); break;
-      case 'checkpoint': sfx.play('checkpoint'); toast('到达存档点！掉下去也能从这儿接着来', 1500); break;
+      case 'checkpoint': sfx.play('checkpoint'); toast('第 ' + ((d && d.level) || 1) + ' 关完成！+100', 1600); break;
       case 'respawn': sfx.play('respawn'); break;
       case 'spring': sfx.play('spring'); break;
       case 'gameover': onGameOver(d); break;
