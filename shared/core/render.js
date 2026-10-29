@@ -138,17 +138,13 @@
       if (this._zoom === undefined) this._zoom = 1;
       this._zoom += (zoomT - this._zoom) * Math.min(1, (dt || 0.016) * 4);
       if (this._zoom < 0.985) {
-        var fcx = (mA.x + mB.x) / 2, fcy = Math.max(180, Math.min(500, (mA.y + mB.y) / 2));
-        if (this._czx === undefined) { this._czx = fcx; this._czy = fcy; }
+        var fcx = (mA.x + mB.x) / 2;
+        if (this._czx === undefined) this._czx = fcx;
         this._czx += (fcx - this._czx) * Math.min(1, (dt || 0.016) * 3);
-        this._czy += (fcy - this._czy) * Math.min(1, (dt || 0.016) * 3);
-        // r23：视野下缘不许超过水面以下一点点——否则缩小时会看到画布外的空底，
-        // 柱子被"截断在半空"。上界同理，保证天空始终从画布顶开始
+        // r24（用户反馈）：垂直方向不做"跟随两猴"，而是把平台面几何锚定在屏幕固定高度，
+        // 这样缩放后平台永远在画面中部，不会沉底（见下方 transform 的 ANCHOR_Y）
+        this._ANCHOR_Y = CFG.H * 0.46;
         var halfH = CFG.H / (2 * this._zoom);
-        var cyMin = halfH - 20;                 // 顶边 >= -20
-        var cyMax = CFG.WATER_Y + 40 - halfH;   // 底边 <= 水线下 40
-        var lo = Math.min(cyMin, cyMax), hi = Math.max(cyMin, cyMax);
-        this._czy = Math.max(lo, Math.min(hi, this._czy));
         this._viewL = this._czx - CFG.W / (2 * this._zoom) - 80;
         this._viewR = this._czx + CFG.W / (2 * this._zoom) + 80;
       } else {
@@ -156,11 +152,16 @@
         this._viewL = g.camX - 80; this._viewR = g.camX + CFG.W + 80;
       }
     }
+    // r24：整块画布（含等比缩放的上下留白）对应的世界范围——
+    // 天空与水按这个范围铺，长屏手机才不会在底部露出空地
+    this._calcFullView(g);
     ctx.save();
     if (this._zoom !== undefined && this._zoom < 0.985) {
-      ctx.translate(CFG.W / 2, CFG.H / 2);
+      // r24：水平跟随两猴中心，垂直把平台面（GROUND_Y）钉在屏幕 ANCHOR_Y 处
+      var anchorY = this._ANCHOR_Y !== undefined ? this._ANCHOR_Y : CFG.H * 0.46;
+      ctx.translate(CFG.W / 2, anchorY);
       ctx.scale(this._zoom, this._zoom);
-      ctx.translate(-this._czx + shakeX / this._zoom, shakeY / this._zoom);
+      ctx.translate(-this._czx + shakeX / this._zoom, -CFG.GROUND_Y + shakeY / this._zoom);
     } else {
       ctx.translate(-g.camX + shakeX, shakeY);
     }
@@ -185,18 +186,48 @@
     this._progress(g);
   };
 
+  // r24：把"整块画布"（CSS 像素）反算成世界坐标范围。
+  // 等比缩放会在画布上下（或左右）留白，若只按 CFG.W/CFG.H 绘制，
+  // 长屏手机上底部就会露出一条空地。这里统一给出 _fullT/_fullB/_fullL/_fullR。
+  Renderer.prototype._calcFullView = function (g) {
+    var vp = this.vp;
+    var z = this._zoom === undefined ? 1 : this._zoom;
+    var sc = (vp && vp.scale) || this.scale || 1;
+    var offY = vp ? vp.offY : 0;
+    var offX = vp ? vp.offX : 0;
+    var vpH = vp ? vp.h : CFG.H;
+    var vpW = vp ? vp.w : CFG.W;
+    if (z < 0.985) {
+      var anchorY = this._ANCHOR_Y !== undefined ? this._ANCHOR_Y : CFG.H * 0.46;
+      // cssY = offY + sc * (anchorY + z*(worldY - GROUND_Y))
+      this._fullT = CFG.GROUND_Y + ((0 - offY) / sc - anchorY) / z;
+      this._fullB = CFG.GROUND_Y + ((vpH - offY) / sc - anchorY) / z;
+      // cssX = offX + sc * (CFG.W/2 + z*(worldX - czx))
+      this._fullL = this._czx + ((0 - offX) / sc - CFG.W / 2) / z;
+      this._fullR = this._czx + ((vpW - offX) / sc - CFG.W / 2) / z;
+    } else {
+      this._fullT = (0 - offY) / sc;
+      this._fullB = (vpH - offY) / sc;
+      this._fullL = g.camX + (0 - offX) / sc;
+      this._fullR = g.camX + (vpW - offX) / sc;
+    }
+    // 兜底：背景范围必须至少覆盖 _viewL/_viewR/_viewB（没有 vp 的宿主环境如小程序/测试 mock）
+    if (this._viewL !== undefined && this._fullL > this._viewL) this._fullL = this._viewL;
+    if (this._viewR !== undefined && this._fullR < this._viewR) this._fullR = this._viewR;
+    if (this._viewB !== undefined && this._fullB < this._viewB) this._fullB = this._viewB;
+  };
+
   // r23：天空 / 云 / 远山在世界空间绘制，按当前视野（含缩放）铺满整屏。
   // 缩放时世界被 scale(zoom)，若背景仍留在屏幕空间就会出现"天不缩、地缩"
   // 的错位：天地缝合不上，四周露出深色空带。
   Renderer.prototype._worldBackdrop = function (g, t, dn, TC) {
     var ctx = this.ctx;
     var z = this._zoom === undefined ? 1 : this._zoom;
-    var L = this._viewL !== undefined ? this._viewL : g.camX - 80;
-    var R = this._viewR !== undefined ? this._viewR : g.camX + CFG.W + 80;
-    // 视野上下界（世界坐标）：缩放中心 = _czy，扩到画布之外一点，避免边缘露底
-    var cy = (this._czy !== undefined ? this._czy : CFG.H / 2);
-    var vT = cy - CFG.H / (2 * z) - 100;
-    var vB = cy + CFG.H / (2 * z) + 100;
+    // 铺满整块画布（含等比缩放留白）——与 _calcFullView 同一来源
+    var L = (this._fullL !== undefined ? this._fullL : (this._viewL !== undefined ? this._viewL : g.camX)) - 10;
+    var R = (this._fullR !== undefined ? this._fullR : (this._viewR !== undefined ? this._viewR : g.camX + CFG.W)) + 10;
+    var vT = (this._fullT !== undefined ? this._fullT : -100) - 10;
+    var vB = (this._fullB !== undefined ? this._fullB : CFG.H + 100) + 10;
 
     // ---- 天空 ----
     var R2 = R - L, B2 = vB - vT;
@@ -310,11 +341,13 @@
 
   Renderer.prototype._water = function (g, t) {
     var ctx = this.ctx;
-    var left = this._viewL !== undefined ? this._viewL : g.camX - 40,
-        right = this._viewR !== undefined ? this._viewR : g.camX + CFG.W + 40;
+    var left = this._fullL !== undefined ? this._fullL - 10 : g.camX - 40,
+        right = this._fullR !== undefined ? this._fullR + 10 : g.camX + CFG.W + 40;
     var y = CFG.WATER_Y;   // 水面在画面最底部
+    // r24：缩小时视野底部低于水面，水必须一直铺到视野底，否则平台居中后下方露空
+    var waterBottom = (this._fullB !== undefined ? this._fullB : CFG.H) + 60;
     ctx.fillStyle = COL.water;
-    ctx.fillRect(left, y, right - left, CFG.H - y + 200);
+    ctx.fillRect(left, y, right - left, waterBottom - y);
     ctx.fillStyle = COL.waterDark;
     for (var i = 0; i < 40; i++) {
       var wx = Math.floor(left / 46) * 46 + i * 46;
@@ -932,7 +965,7 @@
     var lv = g.level || 1;
     var span = CFG.CP_SPACING || 2200;
     var frac = Math.max(0, Math.min(1, (g.maxX - (g._levelStartX !== undefined ? g._levelStartX : -25)) / span));
-    var bw = 150, bh = 7, bx = (CFG.W - bw) / 2, by = 78;   // r15 实机：DOM HUD 约占画布顶部 70px，下移避让
+    var bw = 150, bh = 7, bx = (CFG.W - bw) / 2, by = 60;   // r24：上移贴近 HUD（原 78 偏低）
     ctx.save();
     ctx.globalAlpha = 0.88;
     ctx.fillStyle = 'rgba(0,0,0,0.28)';
