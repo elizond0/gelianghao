@@ -197,12 +197,7 @@
     if (type === 'spring' && this.ui.onToast) {
       this.ui.onToast('弹！蘑菇送你一程', 1300);
     }
-    if (type === 'checkpoint' && this.ui.onToast) {
-      this.ui.onToast('到达存档点！掉下去也能从这儿接着来', 1500);
-    }
-    if (type === 'gold' && this.ui.onToast) {
-      this.ui.onToast('金香蕉 +50！', 1200);
-    }
+    // r24：gold / checkpoint 的玩法类 toast 已废除（已有「怎么玩」面板），只留音效
   };
 
   Session.prototype._onOver = function (d) {
@@ -220,7 +215,9 @@
       bestCombo: (d && d.bestCombo) || 0,
       time: (d && d.time) || 0,
       perfects: (d && d.perfects) || 0,
-      golds: (d && d.golds) || 0
+      golds: (d && d.golds) || 0,
+      level: (d && d.level) || 1,
+      fallsSinceCP: (d && d.fallsSinceCP) || 0
     });
   };
 
