@@ -823,7 +823,8 @@
       pts[0].x = ax; pts[0].y = ay; pts[N].x = bx; pts[N].y = by;
     }
     // 张力可视化：两端距离 / 弹性上限 -> 越绷越细越红（沿用 r15 配色映射）
-    var stretchT = Math.max(0, Math.min(1, spanNow / (rest * ((CFG.ROPE_STRETCH || 3.4) - 1))));
+    var ropeLimR = Math.min(rest * ((CFG.ROPE_STRETCH || 3.4)), (CFG.ROPE_MAX || 1e9));   // r20：与物理上限同步
+    var stretchT = Math.max(0, Math.min(1, spanNow / ropeLimR));
     // 平滑折线：过相邻中点的二次贝塞尔
     function strokePath() {
       ctx.beginPath();
