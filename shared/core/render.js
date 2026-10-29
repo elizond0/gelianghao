@@ -902,9 +902,10 @@
     ctx.textAlign = 'center';
     ctx.lineWidth = 3.5;
     ctx.strokeStyle = 'rgba(50,32,14,0.85)';   // r16c: 描边再实一点（云上要清晰）
-    ctx.strokeText('第 ' + lv + ' 关 · ' + dist + 'm', CFG.W / 2, by + bh + 17);
+    var label = '第 ' + lv + ' 关 · ' + dist + 'm';
+    ctx.strokeText(label, CFG.W / 2, by + bh + 17);
     ctx.fillStyle = '#ffffff';
-    ctx.fillText('第 ' + lv + ' 关', CFG.W / 2, by + bh + 17);
+    ctx.fillText(label, CFG.W / 2, by + bh + 17);
     ctx.restore();
   };
 
