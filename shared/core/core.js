@@ -60,7 +60,8 @@
     GOLD_CHANCE: 0.13,    // 金香蕉生成概率（挂在跳跃顶点高度，要跳起来才吃得到）
     GOLD_BONUS: 50,
     SWING_LIFT: 2.6,      // 绳子绷紧且下方那只下落时，把它往上悠的加速度系数
-    // r20：MAX_FALLS_PER_CP 卡关结算已废除——落水/平台下永不结束游戏，耗尽一律回检查点
+    // r26（用户规则）：本关内双落水累计 MAX_FALLS_PER_LEVEL 次 -> 提示并结算；过关即清零（fallsSinceCP）
+    MAX_FALLS_PER_LEVEL: 3,
     BOTH_WET_DELAY: 0.9,  // 双落水后停顿这么久再回检查点/结算（给"完蛋感"留表演时间）
     // ---- 二期：面包和年糕式地形 2.0 ----
     MV_CHANCE: 0.18,      // 移动浮台概率（仅山腰以上生成）
@@ -1152,6 +1153,7 @@
     this.emit('gameover', {
       score: this.score, distance: this.distance,
       coins: this.coins, rescues: this.rescues,
+      level: this.level, fallsSinceCP: this.fallsSinceCP,
       falls: this.falls, bestCombo: this.bestCombo,
       perfects: this.perfects, golds: this.golds,
       time: Math.round(this.time),
@@ -1160,15 +1162,20 @@
   };
 
   /**
-   * 双落水总入口（面包和年糕式检查点续跳）：
-   *  - 已越过检查点、且没在同一检查点连续摔 MAX_FALLS_PER_CP 次 -> 回检查点继续
-   *  - 还没走到任何一个检查点就双落 -> 直接结算（开局不给兜底）
-   *  - 同一检查点连摔 3 次 -> 判定卡关，结算（防止被地形焊死）
+   * 双落水总入口：
+   *  - 本关内累计到第 MAX_FALLS_PER_LEVEL 次 -> 提示并结算（r26 用户规则）
+   *  - 未到上限 -> 回本关起点平台（= 最近通过的过关旗）重打，关卡不倒退
+   *  计数用 fallsSinceCP，它在过关时清零，所以口径是"每关 3 次"而不是全局 3 次。
    */
   Game.prototype._onBothWet = function () {
     if (this.state !== 'playing') return;
-    // r21（视频玩法）：两只同时掉落才重打本关——回本关起点平台，关卡不倒退，永不结算
-    this._respawnAt({ x: this._levelStartX }, '双双落水！重打第 ' + this.level + ' 关');
+    if (this.fallsSinceCP >= CFG.MAX_FALLS_PER_LEVEL - 1) {
+      this._gameOver('falls-limit');
+      return;
+    }
+    var left = CFG.MAX_FALLS_PER_LEVEL - 1 - this.fallsSinceCP;
+    this._respawnAt({ x: this._levelStartX },
+      '双双落水！第 ' + this.level + ' 关还剩 ' + left + ' 次机会');
   };
 
   /** 两只猴 + 绳子整体复位到检查点；距离/分数/金香蕉都保留（分是"到过的高度"） */
