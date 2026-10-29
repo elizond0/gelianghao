@@ -103,12 +103,12 @@ input, textarea { user-select: text; -webkit-user-select: text; touch-action: au
 /* 连击 pill：默认隐藏，>=2 连击才亮，橙色渐变 + 弹跳 */
 .pill.combo {
   background: linear-gradient(135deg, #ff922b, #e8590c);
-  opacity: 0;
+  display: none;        /* 隐藏时不占布局位，否则窄屏会把 HUD 挤出视口 */
   transform: scale(.5);
   transition: opacity .18s, transform .18s;
   padding: 5px 12px;
 }
-.pill.combo.show { opacity: 1; transform: scale(1); }
+.pill.combo.show { display: flex; opacity: 1; transform: scale(1); }
 .pill.combo .k { color: rgba(255, 255, 255, .85); font-size: 11px; }
 .pill.combo b { color: #fff; font-size: 16px; }
 .pill.combo.pop { animation: comboPop .32s cubic-bezier(.34, 1.56, .64, 1); }
@@ -487,8 +487,19 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
   .hud-left, .hud-right { gap: 6px; }
   .hud.show .hud-left { margin-left: 50px; }
   /* 单机模式下"轮到"无意义，窄屏直接藏掉 */
-  .pill.turn { display: none; }
-  .pill.turn.show { display: flex; }   /* 联机模式由 JS 加 show 时恢复 */
+  .pill.turn, #turnPill { display: none; }
+  .pill.turn.show, #turnPill.show { display: flex; }   /* 联机模式由 JS 加 show 时恢复 */
+}
+/* 中窄窗口（420~540px，PC 缩窗/小平板）：一行 HUD 放不下全部 pill，
+   逐级隐藏低优先级项，防止右侧溢出被 #app 裁切 */
+@media (max-width: 540px) and (min-width: 421px) {
+  .pill { padding: 4px 10px; font-size: 12px; gap: 3px; }
+  .pill b { font-size: 15px; }
+  .hud { padding-left: 10px; padding-right: 10px; }
+  .hud-left, .hud-right { gap: 6px; }
+  .pill.fall { display: none; }
+  .pill.turn, #turnPill { display: none; }
+  .pill.turn.show, #turnPill.show { display: flex; }
 }
 
 /* 结算页 stats 依次弹入 */
