@@ -163,8 +163,34 @@
     if (snowAmt > 0) this._snow(g, t, snowAmt);
 
     // ---------- 世界 ----------
+    // r21（视频玩法）：画面自动缩放——两猴水平距离超过屏宽时，镜头拉远适配；
+    // zoom 恢复 1 后无缝回到常规 camX 跟随
+    var mA = g.monkeys[0], mB = g.monkeys[1];
+    if (mA && mB) {
+      var needW = Math.abs(mA.x - mB.x) + 260;          // 两猴间距 + 两侧余量
+      var zoomT = Math.max(0.55, Math.min(1, CFG.W / Math.max(needW, 460)));
+      if (this._zoom === undefined) this._zoom = 1;
+      this._zoom += (zoomT - this._zoom) * Math.min(1, (dt || 0.016) * 4);
+      if (this._zoom < 0.985) {
+        var fcx = (mA.x + mB.x) / 2, fcy = Math.max(180, Math.min(500, (mA.y + mB.y) / 2));
+        if (this._czx === undefined) { this._czx = fcx; this._czy = fcy; }
+        this._czx += (fcx - this._czx) * Math.min(1, (dt || 0.016) * 3);
+        this._czy += (fcy - this._czy) * Math.min(1, (dt || 0.016) * 3);
+        this._viewL = this._czx - CFG.W / (2 * this._zoom) - 80;
+        this._viewR = this._czx + CFG.W / (2 * this._zoom) + 80;
+      } else {
+        this._zoom = 1; this._czx = undefined; this._czy = undefined;
+        this._viewL = g.camX - 80; this._viewR = g.camX + CFG.W + 80;
+      }
+    }
     ctx.save();
-    ctx.translate(-g.camX + shakeX, shakeY);
+    if (this._zoom !== undefined && this._zoom < 0.985) {
+      ctx.translate(CFG.W / 2, CFG.H / 2);
+      ctx.scale(this._zoom, this._zoom);
+      ctx.translate(-this._czx + shakeX / this._zoom, shakeY / this._zoom);
+    } else {
+      ctx.translate(-g.camX + shakeX, shakeY);
+    }
 
     this._water(g, t);
     this._platforms(g, t);
@@ -261,7 +287,8 @@
 
   Renderer.prototype._platforms = function (g, t) {
     var ctx = this.ctx;
-    var left = g.camX - 80, right = g.camX + CFG.W + 80;
+    var left = this._viewL !== undefined ? this._viewL : g.camX - 80,
+        right = this._viewR !== undefined ? this._viewR : g.camX + CFG.W + 80;
     for (var i = 0; i < g.platforms.length; i++) {
       var p = g.platforms[i];
       if (p.x + p.w < left || p.x > right) continue;
@@ -393,7 +420,8 @@
   // 柱子半透明叠层：落水猴荡过柱子前面时被柱色罩住，"在柱子间飘荡"的层次感
   Renderer.prototype._pillarOverlay = function (g) {
     var ctx = this.ctx;
-    var left = g.camX - 80, right = g.camX + CFG.W + 80;
+    var left = this._viewL !== undefined ? this._viewL : g.camX - 80,
+        right = this._viewR !== undefined ? this._viewR : g.camX + CFG.W + 80;
     var bottom = CFG.WATER_Y + 30;
     // 有没有湿猴需要罩色？没有就完全跳过，省一层绘制
     var wet = g.monkeys && g.monkeys.filter(function (m) { return m.wetT > 0 && m.wetT < 100; });
@@ -524,7 +552,8 @@
 
   Renderer.prototype._decals = function (g, t) {
     var ctx = this.ctx;
-    var left = g.camX - 80, right = g.camX + CFG.W + 80;
+    var left = this._viewL !== undefined ? this._viewL : g.camX - 80,
+        right = this._viewR !== undefined ? this._viewR : g.camX + CFG.W + 80;
     // 检查点旗
     for (var q = 0; q < g.checkpoints.length; q++) {
       var cp = g.checkpoints[q];
@@ -847,10 +876,11 @@
 
   Renderer.prototype._progress = function (g) {
     var ctx = this.ctx;
-    var M = CFG.MILESTONE || 500;
+    // r21：关卡制进度条——黄条 = 本关推进度（起点平台 -> 过关旗）
     var dist = g.distance || 0;
-    var lv = Math.floor(dist / M) + 1;
-    var frac = (dist % M) / M;
+    var lv = g.level || 1;
+    var span = CFG.CP_SPACING || 2200;
+    var frac = Math.max(0, Math.min(1, (g.maxX - (g._levelStartX !== undefined ? g._levelStartX : -25)) / span));
     var bw = 150, bh = 7, bx = (CFG.W - bw) / 2, by = 78;   // r15 实机：DOM HUD 约占画布顶部 70px，下移避让
     ctx.save();
     ctx.globalAlpha = 0.88;
@@ -874,7 +904,7 @@
     ctx.strokeStyle = 'rgba(50,32,14,0.85)';   // r16c: 描边再实一点（云上要清晰）
     ctx.strokeText('第 ' + lv + ' 关 · ' + dist + 'm', CFG.W / 2, by + bh + 17);
     ctx.fillStyle = '#ffffff';
-    ctx.fillText('第 ' + lv + ' 关 · ' + dist + 'm', CFG.W / 2, by + bh + 17);
+    ctx.fillText('第 ' + lv + ' 关', CFG.W / 2, by + bh + 17);
     ctx.restore();
   };
 
