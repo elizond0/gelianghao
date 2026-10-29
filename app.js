@@ -279,6 +279,8 @@
 
   // 结算文案：双落水 vs 同一存档点连摔 3 次的卡关，说清楚区别
   function overReasonText(d) {
+    if (d.reason === 'falls-limit')
+      return '第 ' + (d.level || 1) + ' 关连掉 ' + ((d.fallsSinceCP || 0) + 1) + ' 次都没起来，本局结束';
     if (d.reason === 'stuck') return '同一面旗子连掉 ' + (d.falls || 3) + ' 次，这关先饶过你们';
     if (d.rescues >= 3) return '你俩互相拉上来 ' + d.rescues + ' 次，最后还是双双落水';
     return '两只猴子一起掉进了水里';
