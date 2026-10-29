@@ -149,8 +149,11 @@ input, textarea { user-select: text; -webkit-user-select: text; touch-action: au
   opacity: 0;
   transition: opacity .2s, transform .2s;
   pointer-events: none;
-  white-space: nowrap;
   z-index: 30;
+  max-width: 86%;
+  white-space: normal;      /* 长文案（如静态版联机提示）可折行，不再横向裁切 */
+  text-align: center;
+  border-radius: 18px;
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 
@@ -208,11 +211,10 @@ input, textarea { user-select: text; -webkit-user-select: text; touch-action: au
   filter: drop-shadow(0 3px 0 rgba(255, 255, 255, .9)) drop-shadow(0 6px 8px rgba(138, 90, 59, .25));
 }
 .logo .sub {
-  margin: 0; color: #8a7462; font-size: 13px; letter-spacing: 1px;
+  margin: 0; color: #9b8574; font-size: 13px; letter-spacing: 1px;
   display: inline-block; padding: 4px 14px; border-radius: 999px;
   background: rgba(255, 255, 255, .55); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
 }
-.logo .sub { margin: 0; color: #9b8574; font-size: 13px; letter-spacing: 1px; }
 
 @keyframes bob {
   0%, 100% { transform: translateY(0) rotate(-3deg); }
@@ -252,7 +254,7 @@ input, textarea { user-select: text; -webkit-user-select: text; touch-action: au
 }
 .btn.primary:active { box-shadow: 0 1px 0 var(--orange-d); }
 .btn.ghost { background: transparent; box-shadow: none; color: #9b8574; font-weight: 600; font-size: 14px; }
-.btn.small { padding: 13px 18px; font-size: 15px; box-shadow: 0 3px 0 #e8d9c5; }
+.btn.small { padding: 11px 16px; font-size: 14px; box-shadow: 0 3px 0 #e8d9c5; }
 .btn.tiny { padding: 7px 12px; font-size: 12px; border-radius: 10px; box-shadow: 0 2px 0 #e8d9c5; }
 .btn.back { margin-top: 4px; }
 .btn[disabled] { opacity: .5; }
@@ -363,7 +365,7 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
   position: absolute;
   top: calc(10px + env(safe-area-inset-top));
   left: calc(12px + env(safe-area-inset-left));
-  width: 38px; height: 38px;
+  width: 44px; height: 44px;   /* 触控目标基准 ≥44px */
   display: none;
   align-items: center; justify-content: center;
   border: none; border-radius: 50%;
@@ -377,8 +379,8 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
 .icon-btn.show { display: flex; }
 .icon-btn:active { transform: scale(.94); }
 
-/* HUD 左边要给退出按钮让位 */
-.hud.show .hud-left { margin-left: 44px; }
+/* HUD 左边要给退出按钮（44px 宽）让位 */
+.hud.show .hud-left { margin-left: 52px; }
 
 /* ---------- 网络状态条 ---------- */
 .netbar {
@@ -450,7 +452,6 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
   box-shadow: 0 5px 0 #3d5c8b, 0 12px 24px rgba(74, 111, 165, .35), inset 0 1px 0 rgba(255, 255, 255, .4);
 }
 .btn.daily:active { transform: translateY(3px); box-shadow: 0 1px 0 #3d5c8b; }
-.btn.daily:active { transform: scale(0.98); }
 
 .ver { font-size: 11px; color: #b7a893; margin-top: 6px; letter-spacing: 0.5px; }
 
@@ -498,7 +499,7 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
   .pill.coin b, .pill.time b, .pill.fall b { font-size: 12px; }
   .hud { padding-left: 8px; padding-right: 8px; gap: 6px; }
   .hud-left, .hud-right { gap: 6px; }
-  .hud.show .hud-left { margin-left: 42px; }
+  .hud.show .hud-left { margin-left: 50px; }
   /* 单机模式下"轮到"无意义，窄屏直接藏掉 */
   .pill.turn { display: none; }
   .pill.turn.show { display: flex; }   /* 联机模式由 JS 加 show 时恢复 */
@@ -540,19 +541,43 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
 .set-info b { display: block; font-size: 15px; color: var(--brown); }
 .set-info span { font-size: 11.5px; color: #9b8574; line-height: 1.5; }
 
-/* 拨动开关 */
+/* 拨动开关：视觉 52x32，::before 扩出不可见热区凑满 44px 触控基准 */
 .toggle {
-  flex-shrink: 0; width: 52px; height: 30px; border: none; border-radius: 999px;
+  flex-shrink: 0; width: 52px; height: 32px; border: none; border-radius: 999px;
   background: #d8cbb8; position: relative; cursor: pointer; padding: 0;
   transition: background .18s;
+  overflow: visible;
 }
+.toggle::before { content: ''; position: absolute; inset: -7px -10px; }
 .toggle i {
-  position: absolute; top: 3px; left: 3px; width: 24px; height: 24px;
+  position: absolute; top: 3px; left: 3px; width: 26px; height: 26px;
   border-radius: 50%; background: #fff; box-shadow: 0 2px 5px rgba(0,0,0,.2);
   transition: left .18s;
 }
 .toggle.on { background: var(--green); }
-.toggle.on i { left: 25px; }
+.toggle.on i { left: 23px; }
+
+/* ---------- 键盘可达性：可见焦点环 ---------- */
+.btn:focus-visible, .icon-btn:focus-visible, .toggle:focus-visible {
+  outline: 3px solid #1c7ed6;
+  outline-offset: 2px;
+}
+.join-row input:focus-visible {
+  outline: 3px solid #1c7ed6;
+  outline-offset: 2px;
+}
+
+/* ---------- 动效降级：尊重系统"减弱动态效果" ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .logo-monkey, .rotate-ico { animation: none; }
+  .screen.show, #scrOver.show .stats div { animation: none; }
+  .pill.combo.pop { animation: none; }
+  *, *::before, *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
 
 </style>
 </head>
@@ -701,14 +726,15 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
     <ul class="how">
       <li><b>按下立刻起跳，按住持续往上飞，松手快速落地。</b>按多久决定飞多高多远（头顶燃料条见底就开始落）。</li>
       <li>头顶有<b>橙色箭头</b>的那只猴子，才是你现在能操作的那只。</li>
-      <li>它掉进坑里别慌：它会<b>挂在绳子上贴着水面荡</b>（不沉底），等箭头换到另一只，<b>让它往前跳过坑</b>，绳子就会把伙伴<b>钓上来</b>，还能加分。</li>
-      <li>两只一起掉进去，这局就结束。</li>
+      <li><b>关卡制闯关</b>：跳上门台越过<b>橙色过关旗</b>就进入下一关（+100 分），进度条显示本关推进度，看看你俩能连过多少关。</li>
+      <li><b>掉坑别慌</b>：落水的猴子会<b>挂在绳子上贴着水面荡</b>（不沉底、永不超时），等箭头换到另一只，<b>让它往前跳</b>，绳子就会把伙伴<b>钓上来</b>，还能加分。</li>
+      <li>只有<b>两只猴子同时落水</b>才会重打本关（回到本关起点平台，分数保留），只要有一只还站着就不算失败。</li>
       <li>躲开小熊和食人鱼，顺手捡金币（+10 分）。</li>
       <li><b>尖刺在平台边缘</b>：往平台中间的虚线靶圈落就绝对安全；扎到会短晕并扣 20 分。</li>
       <li><b>完美着陆</b>：落在平台正中央的虚线圈里，连击不断加分越高（+15 起，3 连击后每次再 +15）。</li>
       <li><b>金香蕉</b>：挂得更高的金色香蕉，+50 分，看见了就跳高一点去够。</li>
-      <li><b>蓝色小旗是存档点</b>：双落水后从最近的旗子接着跳，分数保留；同一面旗连掉 3 次才真结算。</li>
-      <li><b>弹性绳子</b>：绳子拉得越长绷得越紧。飞得又高又远时，绷紧的绳子会把<b>站着的伙伴直接拽起来</b>跟你一起飞。</li>
+      <li><b>绳子能拉很长</b>：绳子拉长会绷紧把伙伴拽住，但有长度上限；飞得又高又远时，绷紧的绳子会把<b>站着的伙伴直接拽起来</b>跟你一起飞。</li>
+      <li><b>自动缩放</b>：两只猴离得太远时，画面会自动缩小把彼此都装进视野，靠近后再放大回来。</li>
       <li><b>移动浮台</b>：木牌浮台左右巡逻，跟着它一起动，落点要留提前量。</li>
       <li><b>弹跳蘑菇</b>：踩中红伞蘑菇会自动弹起并往前飞一段（自动帮你按住），连击不清零，是免费的顺风车；垫外的石板可以正常落脚。</li>
       <li><b>山口阵风</b>：刮几秒停几秒（风线消失=停风）。顺风窗口按久一点能飞更远，顶风时早点松手；落了地就没风。</li>
@@ -725,7 +751,7 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
 <script>
 /* eslint-disable */
 /* 哥俩好 · 网页端单文件打包产物 —— 由 scripts/build-web-bundle.js 自动生成，请勿手改 */
-/* 生成时间：2026-10-29T13:03:40.966Z */
+/* 生成时间：2026-10-29T13:24:03.671Z */
 (function () {
   'use strict';
   var __mods = {};
