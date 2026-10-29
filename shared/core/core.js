@@ -77,7 +77,7 @@
   };
 
   // 版本号：日期 + 当日构建序号，首页展示
-  var VERSION = 'v2026.10.29-r17';
+  var VERSION = 'v2026.10.29-r18';
 
   // 山体主题：由 levelAt() 的档位驱动，渲染层读同一个下标做配色/飘雪
   // （面包和年糕的"山脚 -> 雪线 -> 暴风雪山顶"爬升感）
@@ -995,7 +995,10 @@
       // 身体从上往下穿过台面 = 物理意义上"上去了"，直接判救援（+30），不依赖收绳。
       // 从台面下往上穿、或差一点落在台缘外，都不算（继续荡，等收绳）。
       var swingHit = this._crossedSurface(m.x, prevWy, m.x, m.y);
-      if (swingHit) { this._rescued(m, swingHit, true); continue; }
+      // r18：收绳上拉阶段豁免穿面判定——否则慢速上升经过台面 1.5px 容差带会被误判"穿台"
+      // （正是"吊着自动上平台"的残余形态）；松手（_reelFree）后的下落才允许判救援
+      var reelUp = other.grounded && m.wetRescueDelay <= 0 && !m._reelFree;
+      if (swingHit && !reelUp) { this._rescued(m, swingHit, true, m._viaReel === true); continue; }
 
       // 3) 摆动阻尼：荡几下慢慢稳下来
       m.vx *= 1 - Math.min(1, 0.5 * dt);
@@ -1004,29 +1007,42 @@
       // 3.5) 刚落水先让他荡一会儿（RESCUE_DELAY），别一沾水就被钓上来
       if (m.wetRescueDelay > 0) m.wetRescueDelay -= dt;
 
-      // 4) 伙伴站稳在岸上 -> 慢慢收绳往上钓，够到平台就拉上来
+      // 4) 伙伴站稳在岸上 -> 收绳钓人（r18 重做：拉过台沿 -> 松手落台 -> r17 穿台面判定救援。
+      //    废除 r16b"吊着垂直吸附托岸"——用户实测否决：猴没被拉过平台就直接穿台上岸，过程不物理）
       if (other.grounded && m.wetRescueDelay <= 0) {
-        var cur = Math.sqrt((m.x - ax) * (m.x - ax) + (m.y - ay) * (m.y - ay)) || 1;
-        var reel = Math.min(1, dt * 1.8);
-        var rx = (m.x - ax) / cur, ry = (m.y - ay) / cur;
-        var target = 12;   // r16b 实机：0.42*rest 会吊在平台下方柱子间永远上不来，直接收到锚点（站台猴身上），够到台面即托岸
-        m.x = lerp(m.x, ax + rx * target, reel);
-        m.y = lerp(m.y, ay + ry * target, reel);
         var pHere = this.platformAt(m.x);
-        if (pHere) {
-          // r16b 实机：单摆重力/浮力震荡（±50px）会淹没收绳 lerp，猴永远到不了台面。
-          // 锚点上方有台时直接强吸附托岸（每帧清震荡速度），走到台高即上岸
-          var topY = pHere.y - 4;
+        if (pHere && m._reelFree && m.y < pHere.y - 1) {
+          // 4.1 已松手（拉到台面上方 24px 后放开）：交给重力落到台面（2.7 穿台面判定救援），
+          //     只轻推向台心防落回坑里；不动 vy，让重力自然积累
+          m._viaReel = true;
+          m.vx = (pHere.x + pHere.w / 2 > m.x ? 1 : -1) * 60;
+        } else if (pHere) {
+          // 4.2 吊在台身侧面/柱子间：平滑上拉越过台沿（清震荡速度防 r16b 的卡柱 issue），
+          //     拉到台面上方 24px 即松手（_reelFree）——必须"拉得超过平台"，不许停在台面处
+          m._viaReel = true;
+          m._reelFree = false;
+          var topY = pHere.y - 40;
           m.vx = 0; m.vy = 0;
           m.y = lerp(m.y, topY, Math.min(1, dt * 4));
-          m.x = lerp(m.x, ax, Math.min(1, dt * 4));
-          if (Math.abs(m.y - topY) < 10) { this._rescued(m, pHere); continue; }
+          m.x = lerp(m.x, clamp(m.x, pHere.x + 14, pHere.x + pHere.w - 14), Math.min(1, dt * 2.5));
+          if (m.y <= pHere.y - 24) m._reelFree = true;
+        } else {
+          // 4.3 吊在坑上方：先往锚点收，把猴荡回台边后再走 4.2
+          m._viaReel = true;
+          var cur = Math.sqrt((m.x - ax) * (m.x - ax) + (m.y - ay) * (m.y - ay)) || 1;
+          var reel = Math.min(1, dt * 1.8);
+          var rx = (m.x - ax) / cur, ry = (m.y - ay) / cur;
+          var target = 12;
+          m.x = lerp(m.x, ax + rx * target, reel);
+          m.y = lerp(m.y, ay + ry * target, reel);
         }
+      } else {
+        m._viaReel = false;   // 本帧没在收绳（如伙伴在飞=甩上台路径），松手豁免不生效
       }
     }
   };
 
-  Game.prototype._rescued = function (m, p, keepPos) {
+  Game.prototype._rescued = function (m, p, keepPos, viaReel) {
     m.y = p.y;
     m.vy = 0; m.vx = 0;
     m.grounded = true;
@@ -1034,6 +1050,8 @@
     m.squash = 1.28;
     m.charging = false;
     m.rescueGuard = 0.8;   // r16c：钓上来先站稳 0.8s，手指还按着也不会立刻飞出去
+    m._viaReel = false;
+    m._reelFree = false;
     var partner = this.monkeys[1 - m.idx];
     if (keepPos) {
       // r17：被伙伴跳跃"甩"上台的——落在哪站哪（不挪去伙伴旁边），只保证台内不越界；
@@ -1052,11 +1070,17 @@
       m.x = clamp(partner.x + side * 56, p.x + 14, p.x + p.w - 14);
       if (Math.abs(m.x - partner.x) < 30) m.x = clamp(partner.x - side * 40, p.x + 14, p.x + p.w - 14);
       // 单人模式：玩家还按着屏（钓猴姿势）则强制松手，防止落地立即起飞
-      // （r17：甩上台的救援不走这里——伙伴正在飞的"带人上台"就是这个动作本身，不能掐断）
       if (!this.netMode) {
         for (var pi = 0; pi < 2; pi++) {
           if (this.monkeys[pi].charging) { this.monkeys[pi].charging = false; this.emit('jumpEnd', { idx: pi }); }
         }
+      }
+    }
+    // r18：收绳路径落地（keepPos 但 viaReel）也要强制松手——防"钓上来立即又飞出去"循环；
+    // 甩上台（viaReel=false）不松手——伙伴正在飞的"带人上台"就是这个动作本身，不能掐断
+    if (!this.netMode && viaReel) {
+      for (var qi = 0; qi < 2; qi++) {
+        if (this.monkeys[qi].charging) { this.monkeys[qi].charging = false; this.emit('jumpEnd', { idx: qi }); }
       }
     }
     if (m.progressX < m.x) m.progressX = m.x;
