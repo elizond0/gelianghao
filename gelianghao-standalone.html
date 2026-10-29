@@ -117,12 +117,12 @@ input, textarea { user-select: text; -webkit-user-select: text; touch-action: au
 /* 连击 pill：默认隐藏，>=2 连击才亮，橙色渐变 + 弹跳 */
 .pill.combo {
   background: linear-gradient(135deg, #ff922b, #e8590c);
-  opacity: 0;
+  display: none;        /* 隐藏时不占布局位，否则窄屏会把 HUD 挤出视口 */
   transform: scale(.5);
   transition: opacity .18s, transform .18s;
   padding: 5px 12px;
 }
-.pill.combo.show { opacity: 1; transform: scale(1); }
+.pill.combo.show { display: flex; opacity: 1; transform: scale(1); }
 .pill.combo .k { color: rgba(255, 255, 255, .85); font-size: 11px; }
 .pill.combo b { color: #fff; font-size: 16px; }
 .pill.combo.pop { animation: comboPop .32s cubic-bezier(.34, 1.56, .64, 1); }
@@ -501,8 +501,19 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
   .hud-left, .hud-right { gap: 6px; }
   .hud.show .hud-left { margin-left: 50px; }
   /* 单机模式下"轮到"无意义，窄屏直接藏掉 */
-  .pill.turn { display: none; }
-  .pill.turn.show { display: flex; }   /* 联机模式由 JS 加 show 时恢复 */
+  .pill.turn, #turnPill { display: none; }
+  .pill.turn.show, #turnPill.show { display: flex; }   /* 联机模式由 JS 加 show 时恢复 */
+}
+/* 中窄窗口（420~540px，PC 缩窗/小平板）：一行 HUD 放不下全部 pill，
+   逐级隐藏低优先级项，防止右侧溢出被 #app 裁切 */
+@media (max-width: 540px) and (min-width: 421px) {
+  .pill { padding: 4px 10px; font-size: 12px; gap: 3px; }
+  .pill b { font-size: 15px; }
+  .hud { padding-left: 10px; padding-right: 10px; }
+  .hud-left, .hud-right { gap: 6px; }
+  .pill.fall { display: none; }
+  .pill.turn, #turnPill { display: none; }
+  .pill.turn.show, #turnPill.show { display: flex; }
 }
 
 /* 结算页 stats 依次弹入 */
@@ -751,7 +762,7 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
 <script>
 /* eslint-disable */
 /* 哥俩好 · 网页端单文件打包产物 —— 由 scripts/build-web-bundle.js 自动生成，请勿手改 */
-/* 生成时间：2026-10-29T13:24:03.671Z */
+/* 生成时间：2026-10-29T14:14:33.195Z */
 (function () {
   'use strict';
   var __mods = {};
@@ -2230,48 +2241,14 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
     for (var li = 0; li < lvlArr.length; li++) {
       if (midX >= lvlArr[li].until) ti = Math.min(li + 1, lvlArr.length - 1);
     }
+    this._ti = ti;
     var TC = themeMix(ti);
     var dn = dayNight(g, TC);
-    var sky = ctx.createLinearGradient ? ctx.createLinearGradient(0, 0, 0, H) : null;
-    if (sky) {
-      sky.addColorStop(0, dn.top);
-      sky.addColorStop(1, dn.bottom);
-      ctx.fillStyle = sky;
-    } else {
-      ctx.fillStyle = dn.top;
-    }
+    // r23：天空/云/远山不再在屏幕空间画，改由世界空间按视野铺满（见下方 _worldBackdrop）。
+    // 原因：缩放时世界被 scale，而屏幕空间的天空不缩，两者错位会露出深色空带、天地缝合不上。
+    // 先垫一层纯色兜底（极端情况下也不会有黑底），真实天空在 world 里画。
+    ctx.fillStyle = dn.top;
     ctx.fillRect(0, 0, W, H);
-
-    // 太阳 / 月亮：随昼夜相位切换（黄昏同框淡出，夜晚换月牙）
-    var sunA = dn.phase === 3 ? 0 : (dn.phase === 2 ? 0.45 : (ti >= 4 ? 0.35 : 1));
-    if (sunA > 0) {
-      ctx.globalAlpha = sunA;
-      ctx.fillStyle = COL.sun;
-      circle(ctx, 318, 150, 34);
-      ctx.globalAlpha = sunA * 0.25;
-      circle(ctx, 318, 150, 48);
-    }
-    if (dn.phase === 3 || (dn.phase === 2 && dn.frac > 0.6)) {
-      var moonA = dn.phase === 3 ? 1 : (dn.frac - 0.6) / 0.4;
-      ctx.globalAlpha = moonA * 0.95;
-      ctx.fillStyle = '#f4f1e0';
-      circle(ctx, 318, 150, 26);
-      ctx.fillStyle = dn.top;   // 用天空色咬掉一块 = 月牙
-      circle(ctx, 328, 144, 22);
-    }
-    ctx.globalAlpha = 1;
-
-    // 云
-    ctx.fillStyle = '#ffffff';
-    for (var i = 0; i < this.clouds.length; i++) {
-      var c = this.clouds[i];
-      var cx = ((c.x + t * c.sp - g.camX * 0.12) % 1700 + 1700) % 1700 - 200;
-      this._cloud(cx, c.y, c.s);
-    }
-
-    // 远山（视差）
-    this._hills(g.camX * 0.25, 300, TC.hillFar, 120);
-    this._hills(g.camX * 0.45 + 90, 350, TC.hillNear, 100);
 
     // 飘雪（雪线以上才下；屏幕空间粒子，不进世界坐标）
     var snowAmt = THEMES[ti] ? THEMES[ti].snow : 0;
@@ -2291,6 +2268,13 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
         if (this._czx === undefined) { this._czx = fcx; this._czy = fcy; }
         this._czx += (fcx - this._czx) * Math.min(1, (dt || 0.016) * 3);
         this._czy += (fcy - this._czy) * Math.min(1, (dt || 0.016) * 3);
+        // r23：视野下缘不许超过水面以下一点点——否则缩小时会看到画布外的空底，
+        // 柱子被"截断在半空"。上界同理，保证天空始终从画布顶开始
+        var halfH = CFG.H / (2 * this._zoom);
+        var cyMin = halfH - 20;                 // 顶边 >= -20
+        var cyMax = CFG.WATER_Y + 40 - halfH;   // 底边 <= 水线下 40
+        var lo = Math.min(cyMin, cyMax), hi = Math.max(cyMin, cyMax);
+        this._czy = Math.max(lo, Math.min(hi, this._czy));
         this._viewL = this._czx - CFG.W / (2 * this._zoom) - 80;
         this._viewR = this._czx + CFG.W / (2 * this._zoom) + 80;
       } else {
@@ -2307,6 +2291,8 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
       ctx.translate(-g.camX + shakeX, shakeY);
     }
 
+    // 背景先铺天空渐变/云/远山（世界空间，覆盖整个可视野）
+    this._worldBackdrop(g, t, dn, TC);
     this._water(g, t);
     this._platforms(g, t);
     this._decals(g, t);
@@ -2323,6 +2309,81 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
 
     // r15 顶部关卡进度条（屏幕空间，最后画保证在最上层）
     this._progress(g);
+  };
+
+  // r23：天空 / 云 / 远山在世界空间绘制，按当前视野（含缩放）铺满整屏。
+  // 缩放时世界被 scale(zoom)，若背景仍留在屏幕空间就会出现"天不缩、地缩"
+  // 的错位：天地缝合不上，四周露出深色空带。
+  Renderer.prototype._worldBackdrop = function (g, t, dn, TC) {
+    var ctx = this.ctx;
+    var z = this._zoom === undefined ? 1 : this._zoom;
+    var L = this._viewL !== undefined ? this._viewL : g.camX - 80;
+    var R = this._viewR !== undefined ? this._viewR : g.camX + CFG.W + 80;
+    // 视野上下界（世界坐标）：缩放中心 = _czy，扩到画布之外一点，避免边缘露底
+    var cy = (this._czy !== undefined ? this._czy : CFG.H / 2);
+    var vT = cy - CFG.H / (2 * z) - 100;
+    var vB = cy + CFG.H / (2 * z) + 100;
+
+    // ---- 天空 ----
+    var R2 = R - L, B2 = vB - vT;
+    if (ctx.createLinearGradient) {
+      var sky = ctx.createLinearGradient(0, vT, 0, vB);
+      sky.addColorStop(0, dn.top);
+      sky.addColorStop(1, dn.bottom);
+      ctx.fillStyle = sky;
+    } else {
+      ctx.fillStyle = dn.top;
+    }
+    ctx.fillRect(L, vT, R2, B2);
+    this._backdropCalls = (this._backdropCalls || 0) + 1;
+    this._backdropRect = { x: L, y: vT, w: R2, h: B2 };
+
+    // ---- 远山（视差，横向按视野铺满）----
+    var span = 220;
+    var hillDefs = [[0.25, 300, TC.hillFar, 120], [0.45, 350, TC.hillNear, 100]];
+    for (var hi = 0; hi < hillDefs.length; hi++) {
+      var k = hillDefs[hi][0], baseY = hillDefs[hi][1],
+          color = hillDefs[hi][2], hh = hillDefs[hi][3];
+      var o = g.camX * k + (hi === 1 ? 90 : 0);
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      var s0 = Math.floor((o + L) / span) * span - span;
+      for (var x = s0; x <= o + R + span; x += span) {
+        var sx = x - o;
+        ctx.moveTo(sx, CFG.WATER_Y + 12);
+        ctx.quadraticCurveTo(sx + span / 2, baseY - hh, sx + span, CFG.WATER_Y + 12);
+        ctx.lineTo(sx, CFG.WATER_Y + 12);
+      }
+      ctx.fill();
+    }
+
+    // ---- 太阳 / 月亮（世界坐标，随缩放一起变换）----
+    var sunA = dn.phase === 3 ? 0 : (dn.phase === 2 ? 0.45 : (this._ti >= 4 ? 0.35 : 1));
+    var sunX = L + (R - L) * 0.85, sunY = vT + (vB - vT) * 0.22;
+    if (sunA > 0) {
+      ctx.globalAlpha = sunA;
+      ctx.fillStyle = COL.sun;
+      circle(ctx, sunX, sunY, 34);
+      ctx.globalAlpha = sunA * 0.25;
+      circle(ctx, sunX, sunY, 48);
+    }
+    if (dn.phase === 3 || (dn.phase === 2 && dn.frac > 0.6)) {
+      var moonA = dn.phase === 3 ? 1 : (dn.frac - 0.6) / 0.4;
+      ctx.globalAlpha = moonA * 0.95;
+      ctx.fillStyle = '#f4f1e0';
+      circle(ctx, sunX, sunY, 26);
+      ctx.fillStyle = dn.top;
+      circle(ctx, sunX + 10, sunY - 6, 22);
+    }
+    ctx.globalAlpha = 1;
+
+    // ---- 云 ----
+    ctx.fillStyle = '#ffffff';
+    for (var i = 0; i < this.clouds.length; i++) {
+      var c = this.clouds[i];
+      var cx = (((c.x + t * c.sp - g.camX * 0.12) % 1700) + 1700) % 1700 - 200;
+      this._cloud(cx, c.y, c.s);
+    }
   };
 
   Renderer.prototype._cloud = function (x, y, s) {
@@ -2375,7 +2436,8 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
 
   Renderer.prototype._water = function (g, t) {
     var ctx = this.ctx;
-    var left = g.camX - 40, right = g.camX + CFG.W + 40;
+    var left = this._viewL !== undefined ? this._viewL : g.camX - 40,
+        right = this._viewR !== undefined ? this._viewR : g.camX + CFG.W + 40;
     var y = CFG.WATER_Y;   // 水面在画面最底部
     ctx.fillStyle = COL.water;
     ctx.fillRect(left, y, right - left, CFG.H - y + 200);
@@ -3017,9 +3079,10 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
     ctx.textAlign = 'center';
     ctx.lineWidth = 3.5;
     ctx.strokeStyle = 'rgba(50,32,14,0.85)';   // r16c: 描边再实一点（云上要清晰）
-    ctx.strokeText('第 ' + lv + ' 关 · ' + dist + 'm', CFG.W / 2, by + bh + 17);
+    var label = '第 ' + lv + ' 关 · ' + dist + 'm';
+    ctx.strokeText(label, CFG.W / 2, by + bh + 17);
     ctx.fillStyle = '#ffffff';
-    ctx.fillText('第 ' + lv + ' 关', CFG.W / 2, by + bh + 17);
+    ctx.fillText(label, CFG.W / 2, by + bh + 17);
     ctx.restore();
   };
 
