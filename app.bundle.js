@@ -1,6 +1,6 @@
 /* eslint-disable */
 /* 哥俩好 · 网页端单文件打包产物 —— 由 scripts/build-web-bundle.js 自动生成，请勿手改 */
-/* 生成时间：2026-10-29T05:48:08.137Z */
+/* 生成时间：2026-10-29T07:27:47.291Z */
 (function () {
   'use strict';
   var __mods = {};
@@ -73,7 +73,7 @@
     RESCUE_DELAY: 1.2,  // 落水后先荡这么久，B 才开始收绳钓人（保住"荡"的观感）
     CAM_LERP: 0.12,
     // ---- 面包和年糕式丰富（均不增加按键，仍只靠长按跳跃）----
-    CP_SPACING: 260,      // 检查点旗间距（世界 px）
+    CP_SPACING: 520,      // 检查点旗间距（世界 px）——r19 实测 260 太密（一屏两面旗），拉大一倍
     PERFECT_RATIO: 0.16,  // 落点距平台中心 < 宽*此值 算完美着陆
     PERFECT_BONUS: 15,    // 完美着陆基础分
     COMBO_BONUS: 15,      // 连击 >=3 时每跳追加
@@ -100,7 +100,7 @@
   };
 
   // 版本号：日期 + 当日构建序号，首页展示
-  var VERSION = 'v2026.10.29-r18';
+  var VERSION = 'v2026.10.29-r19';
 
   // 山体主题：由 levelAt() 的档位驱动，渲染层读同一个下标做配色/飘雪
   // （面包和年糕的"山脚 -> 雪线 -> 暴风雪山顶"爬升感）
@@ -678,17 +678,24 @@
       this._bothWetT = 0;
     }
 
-    // 检查点打卡：最远到达越过旗面就算
+    // 检查点打卡（r19 重做）：必须有一只猴"稳稳站上台面"且位置越过旗面才算——
+    // 飞在平台上空 / 坠落在台下方即将落水时经过旗面，都不算（旧版只看 maxX，误触发）
     for (var ci = 0; ci < this.checkpoints.length; ci++) {
       var cp = this.checkpoints[ci];
       if (cp.passed || this.maxX < cp.x) continue;
-      cp.passed = true;
-      this._lastCPIdx = ci;
-      this.fallsSinceCP = 0;
-      var cpy = this._surfaceNear(cp.x, CFG.GROUND_Y);
-      this._float(cp.x, cpy - 100, '检查点！', '#1864ab');
-      this._burst(cp.x, cpy - 56, 10, '#74c0fc');
-      this.emit('checkpoint', { x: cp.x });
+      for (var mi2 = 0; mi2 < 2; mi2++) {
+        var cpm = ms[mi2];
+        if (cpm.grounded && cpm.wetT <= 0 && cpm.stunT <= 0 && cpm.x >= cp.x && this.platformAt(cpm.x)) {
+          cp.passed = true;
+          this._lastCPIdx = ci;
+          this.fallsSinceCP = 0;
+          var cpy = this._surfaceNear(cp.x, CFG.GROUND_Y);
+          this._float(cp.x, cpy - 100, '检查点！', '#1864ab');
+          this._burst(cp.x, cpy - 56, 10, '#74c0fc');
+          this.emit('checkpoint', { x: cp.x });
+          break;
+        }
+      }
     }
   };
 
@@ -1018,10 +1025,7 @@
       // 身体从上往下穿过台面 = 物理意义上"上去了"，直接判救援（+30），不依赖收绳。
       // 从台面下往上穿、或差一点落在台缘外，都不算（继续荡，等收绳）。
       var swingHit = this._crossedSurface(m.x, prevWy, m.x, m.y);
-      // r18：收绳上拉阶段豁免穿面判定——否则慢速上升经过台面 1.5px 容差带会被误判"穿台"
-      // （正是"吊着自动上平台"的残余形态）；松手（_reelFree）后的下落才允许判救援
-      var reelUp = other.grounded && m.wetRescueDelay <= 0 && !m._reelFree;
-      if (swingHit && !reelUp) { this._rescued(m, swingHit, true, m._viaReel === true); continue; }
+      if (swingHit) { this._rescued(m, swingHit, true); continue; }
 
       // 3) 摆动阻尼：荡几下慢慢稳下来
       m.vx *= 1 - Math.min(1, 0.5 * dt);
@@ -1030,38 +1034,9 @@
       // 3.5) 刚落水先让他荡一会儿（RESCUE_DELAY），别一沾水就被钓上来
       if (m.wetRescueDelay > 0) m.wetRescueDelay -= dt;
 
-      // 4) 伙伴站稳在岸上 -> 收绳钓人（r18 重做：拉过台沿 -> 松手落台 -> r17 穿台面判定救援。
-      //    废除 r16b"吊着垂直吸附托岸"——用户实测否决：猴没被拉过平台就直接穿台上岸，过程不物理）
-      if (other.grounded && m.wetRescueDelay <= 0) {
-        var pHere = this.platformAt(m.x);
-        if (pHere && m._reelFree && m.y < pHere.y - 1) {
-          // 4.1 已松手（拉到台面上方 24px 后放开）：交给重力落到台面（2.7 穿台面判定救援），
-          //     只轻推向台心防落回坑里；不动 vy，让重力自然积累
-          m._viaReel = true;
-          m.vx = (pHere.x + pHere.w / 2 > m.x ? 1 : -1) * 60;
-        } else if (pHere) {
-          // 4.2 吊在台身侧面/柱子间：平滑上拉越过台沿（清震荡速度防 r16b 的卡柱 issue），
-          //     拉到台面上方 24px 即松手（_reelFree）——必须"拉得超过平台"，不许停在台面处
-          m._viaReel = true;
-          m._reelFree = false;
-          var topY = pHere.y - 40;
-          m.vx = 0; m.vy = 0;
-          m.y = lerp(m.y, topY, Math.min(1, dt * 4));
-          m.x = lerp(m.x, clamp(m.x, pHere.x + 14, pHere.x + pHere.w - 14), Math.min(1, dt * 2.5));
-          if (m.y <= pHere.y - 24) m._reelFree = true;
-        } else {
-          // 4.3 吊在坑上方：先往锚点收，把猴荡回台边后再走 4.2
-          m._viaReel = true;
-          var cur = Math.sqrt((m.x - ax) * (m.x - ax) + (m.y - ay) * (m.y - ay)) || 1;
-          var reel = Math.min(1, dt * 1.8);
-          var rx = (m.x - ax) / cur, ry = (m.y - ay) / cur;
-          var target = 12;
-          m.x = lerp(m.x, ax + rx * target, reel);
-          m.y = lerp(m.y, ay + ry * target, reel);
-        }
-      } else {
-        m._viaReel = false;   // 本帧没在收绳（如伙伴在飞=甩上台路径），松手豁免不生效
-      }
+      // 4) r19：自动收绳救援废除（用户实测否决两次：吸附穿台 r18 前、站着不动也自动拉上来 r18 后）。
+      //    唯一救援方式 = 伙伴跳跃把湿猴甩荡上台（r17 穿台面判定）；
+      //    湿猴耐心耗尽仍无人救 -> _onWetExpired 回检查点（原版玩法循环）
     }
   };
 
