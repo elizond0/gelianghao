@@ -725,7 +725,7 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
 <script>
 /* eslint-disable */
 /* 哥俩好 · 网页端单文件打包产物 —— 由 scripts/build-web-bundle.js 自动生成，请勿手改 */
-/* 生成时间：2026-10-28T16:26:33.565Z */
+/* 生成时间：2026-10-29T02:52:54.753Z */
 (function () {
   'use strict';
   var __mods = {};
@@ -825,7 +825,7 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
   };
 
   // 版本号：日期 + 当日构建序号，首页展示
-  var VERSION = 'v2026.10.28-r15';
+  var VERSION = 'v2026.10.29-r17';
 
   // 山体主题：由 levelAt() 的档位驱动，渲染层读同一个下标做配色/飘雪
   // （面包和年糕的"山脚 -> 雪线 -> 暴风雪山顶"爬升感）
@@ -1718,6 +1718,7 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
       if (depth > 0) m.vy -= depth * 30 * dt;
       m.vx *= 1 - Math.min(1, 1.1 * dt);    // 水平水阻
 
+      var prevWy = m.y;   // r17：记下本帧起点，供"甩上台"穿面判定
       m.x += m.vx * dt;
       m.y += m.vy * dt;
 
@@ -1737,6 +1738,12 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
         m.y = CFG.WATER_Y + 26;
         if (m.vy > 0) m.vy = 0;
       }
+
+      // 2.7) 被伙伴带着甩上台了（r17 实机）：荡到平台上方再落下来、或被绳拽着掠过台面，
+      // 身体从上往下穿过台面 = 物理意义上"上去了"，直接判救援（+30），不依赖收绳。
+      // 从台面下往上穿、或差一点落在台缘外，都不算（继续荡，等收绳）。
+      var swingHit = this._crossedSurface(m.x, prevWy, m.x, m.y);
+      if (swingHit) { this._rescued(m, swingHit, true); continue; }
 
       // 3) 摆动阻尼：荡几下慢慢稳下来
       m.vx *= 1 - Math.min(1, 0.5 * dt);
@@ -1767,7 +1774,7 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
     }
   };
 
-  Game.prototype._rescued = function (m, p) {
+  Game.prototype._rescued = function (m, p, keepPos) {
     m.y = p.y;
     m.vy = 0; m.vx = 0;
     m.grounded = true;
@@ -1775,16 +1782,29 @@ h2 { margin: 0; font-size: 22px; color: var(--brown); }
     m.squash = 1.28;
     m.charging = false;
     m.rescueGuard = 0.8;   // r16c：钓上来先站稳 0.8s，手指还按着也不会立刻飞出去
-    // r16c 实机：强吸附把猴拉到锚点（伙伴正身上）导致两猴完全重叠、"猴消失+绳不见"。
-    // 放到伙伴另一侧的空位上（台内 clamp，窄台兜底）
     var partner = this.monkeys[1 - m.idx];
-    var side = partner.x <= p.x + p.w / 2 ? 1 : -1;
-    m.x = clamp(partner.x + side * 56, p.x + 14, p.x + p.w - 14);
-    if (Math.abs(m.x - partner.x) < 30) m.x = clamp(partner.x - side * 40, p.x + 14, p.x + p.w - 14);
-    // 单人模式：玩家还按着屏（钓猴姿势）则强制松手，防止落地立即起飞
-    if (!this.netMode) {
-      for (var pi = 0; pi < 2; pi++) {
-        if (this.monkeys[pi].charging) { this.monkeys[pi].charging = false; this.emit('jumpEnd', { idx: pi }); }
+    if (keepPos) {
+      // r17：被伙伴跳跃"甩"上台的——落在哪站哪（不挪去伙伴旁边），只保证台内不越界；
+      // 伙伴恰在同台才左右错开，防两猴重叠
+      m.x = clamp(m.x, p.x + 14, p.x + p.w - 14);
+      var onSame = partner.grounded && Math.abs(partner.y - p.y) < 4 && this.platformAt(partner.x) === p;
+      if (onSame && Math.abs(m.x - partner.x) < 34) {
+        var sd = m.x >= partner.x ? 1 : -1;
+        m.x = clamp(partner.x + sd * 48, p.x + 14, p.x + p.w - 14);
+        if (Math.abs(m.x - partner.x) < 30) m.x = clamp(partner.x - sd * 48, p.x + 14, p.x + p.w - 14);
+      }
+    } else {
+      // r16c 实机：强吸附把猴拉到锚点（伙伴正身上）导致两猴完全重叠、"猴消失+绳不见"。
+      // 放到伙伴另一侧的空位上（台内 clamp，窄台兜底）
+      var side = partner.x <= p.x + p.w / 2 ? 1 : -1;
+      m.x = clamp(partner.x + side * 56, p.x + 14, p.x + p.w - 14);
+      if (Math.abs(m.x - partner.x) < 30) m.x = clamp(partner.x - side * 40, p.x + 14, p.x + p.w - 14);
+      // 单人模式：玩家还按着屏（钓猴姿势）则强制松手，防止落地立即起飞
+      // （r17：甩上台的救援不走这里——伙伴正在飞的"带人上台"就是这个动作本身，不能掐断）
+      if (!this.netMode) {
+        for (var pi = 0; pi < 2; pi++) {
+          if (this.monkeys[pi].charging) { this.monkeys[pi].charging = false; this.emit('jumpEnd', { idx: pi }); }
+        }
       }
     }
     if (m.progressX < m.x) m.progressX = m.x;
