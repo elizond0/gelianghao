@@ -1,6 +1,6 @@
 /* eslint-disable */
 /* 哥俩好 · 网页端单文件打包产物 —— 由 scripts/build-web-bundle.js 自动生成，请勿手改 */
-/* 生成时间：2026-10-29T12:25:47.829Z */
+/* 生成时间：2026-10-29T13:03:40.966Z */
 (function () {
   'use strict';
   var __mods = {};
@@ -63,7 +63,7 @@
     LIFT_T: 200,          // 把地面伙伴拽离平台的张力阈值（低门槛：一起飞才有原版味）
     ROPE_FLYER_SHARE: 0.15, // 飞行猴自身感受到的张力比例（它在"拽人"，不被反向猛拽）
     ROPE_STRETCH: 3.4,    // 绳子最大拉伸倍数（rest 的倍数），超出硬收
-    ROPE_MAX: 380,        // r20：绳子绝对最大长度（px），下坠再快也拉不超限
+    ROPE_MAX: 500,        // r21：绳子绝对最大长度放宽到 500（原版大荡绳手感；限幅防瞬移保留）
     ROPE_PULL_MAX: 20,    // r20：绳长修正每帧限幅（px）——> 任何外向速度(VY_MAX/60≈16.3)，保证收敛又不瞬移（r11 教训）
     // ---- r15：水面乌龟浮台 + 关卡里程碑 ----
     TURTLE_CHANCE: 0.3,   // 够宽的坑里刷救生乌龟的概率
@@ -75,7 +75,8 @@
     RESCUE_DELAY: 1.2,  // 落水后先荡这么久，B 才开始收绳钓人（保住"荡"的观感）
     CAM_LERP: 0.12,
     // ---- 面包和年糕式丰富（均不增加按键，仍只靠长按跳跃）----
-    CP_SPACING: 520,      // 检查点旗间距（世界 px）——r19 实测 260 太密（一屏两面旗），拉大一倍
+    CP_SPACING: 2200,     // r21：过关旗间距（世界 px）≈1000m 一关——检查点旗升级为"过关旗"，到旗过关进下一关
+    LEVEL_CLEAR_BONUS: 100, // 过关奖励分
     PERFECT_RATIO: 0.16,  // 落点距平台中心 < 宽*此值 算完美着陆
     PERFECT_BONUS: 15,    // 完美着陆基础分
     COMBO_BONUS: 15,      // 连击 >=3 时每跳追加
@@ -102,7 +103,7 @@
   };
 
   // 版本号：日期 + 当日构建序号，首页展示
-  var VERSION = 'v2026.10.29-r20';
+  var VERSION = 'v2026.10.29-r21';
 
   // 山体主题：由 levelAt() 的档位驱动，渲染层读同一个下标做配色/飘雪
   // （面包和年糕的"山脚 -> 雪线 -> 暴风雪山顶"爬升感）
@@ -202,6 +203,8 @@
     // 面包和年糕式新状态
     this.checkpoints = [];    // [{x, passed}] 位置由种子决定，两端一致
     this._nextCPX = 200 + CFG.CP_SPACING;
+    this.level = 1;                       // r21：关卡制——到过关旗 level+1
+    this._levelStartX = -25;              // 本关起点（起始平台中心，双落水重打回到这里）
     this._lastCPIdx = -1;     // 最后越过的检查点下标
     this.falls = 0;           // 累计回检查点次数
     this.fallsSinceCP = 0;    // 当前检查点上已坠落几次（防卡关）
@@ -600,17 +603,18 @@
       if (m.charging) {
         m.chargeT += dt; m.squash = 0.9;   // r14：按住=飞行中
         if (m.autoFly > 0 && m.chargeT >= m.autoFly) { m.charging = false; m.autoFly = 0; }
+        // r21（视频观感）：飞行白烟拖尾——沿飞行路径持续冒淡白烟
+        if (!m._smokeT || this.time - m._smokeT > 0.05) {
+          m._smokeT = this.time;
+          this.particles.push({ x: m.x + (Math.random() - 0.5) * 12, y: m.y - 12,
+            vx: -m.vx * 0.15, vy: -26, life: 0.5, color: '#eef2f5', r: 2.6 });
+        }
       }
       if (m.stunT > 0) m.stunT -= dt;
       if (m.rescueGuard > 0) m.rescueGuard -= dt;
       if (m.coyoteT > 0) m.coyoteT -= dt;
       if (m.jumpBufT > 0) m.jumpBufT -= dt;
-      if (m.wetT > 0) {
-        m.wetT -= dt;
-        // 耐心耗尽还没被救上来 -> 别让它掉出世界（绳子拉长/猴子消失的 bug），
-        // 按"连掉"判定回检查点或结算
-        if (m.wetT <= 0 && !m.grounded) this._onWetExpired(m);
-      }
+      // r21：耐心机制废除——湿猴挂绳等救，永不超时（只要有一只存活就不结算）
       m.blink += dt;
 
       if (!m.grounded && m.wetT <= 0) {
@@ -649,13 +653,7 @@
       this.maxX = lead;
       this.distance = Math.max(0, Math.floor((this.maxX - 200) / 2.2));
     }
-    // r15 关卡里程碑：每 MILESTONE 米进一关（过关浮字 + milestone 事件）
-    var mile = Math.floor(this.distance / CFG.MILESTONE);
-    if (mile > (this.milestone || 0)) {
-      this.milestone = mile;
-      this._float(this.camX + CFG.W / 2, 160, '第 ' + (mile + 1) + ' 关！', '#f08c00');
-      this.emit('milestone', { level: mile + 1 });
-    }
+    // r21：里程碑换关提示已废除——关卡制由过关旗驱动（levelClear 事件）
     this.score = this.distance + this.coins * 10 + this.rescues * 30 + this.bonus;
 
     this._updateCamera(CFG.CAM_LERP);
@@ -691,10 +689,16 @@
           cp.passed = true;
           this._lastCPIdx = ci;
           this.fallsSinceCP = 0;
+          // r21（视频玩法）：过关旗——站台面越旗 = 过关，level+1 进下一关
+          var doneLv = this.level;
+          this.level++;
+          this._levelStartX = cp.x;   // 下一关的"重打起点"
+          this.bonus += CFG.LEVEL_CLEAR_BONUS;
           var cpy = this._surfaceNear(cp.x, CFG.GROUND_Y);
-          this._float(cp.x, cpy - 100, '检查点！', '#1864ab');
-          this._burst(cp.x, cpy - 56, 10, '#74c0fc');
-          this.emit('checkpoint', { x: cp.x });
+          this._float(cp.x, cpy - 110, '第 ' + doneLv + ' 关完成！', '#f08c00');
+          this._burst(cp.x, cpy - 60, 16, '#ffd43b');
+          this.emit('checkpoint', { x: cp.x, level: doneLv });
+          this.emit('levelClear', { level: doneLv, x: cp.x });
           break;
         }
       }
@@ -882,7 +886,13 @@
     }
     // 记录"站稳过的最远位置"：换人时用它判断谁落后、这一棒是否已经跳完
     if (m.progressX < m.x) m.progressX = m.x;
-    this._burst(m.x, plat.y, 5, plat.type === 'ice' ? '#bdf1ff' : '#d8e3a8');
+    // r21（视频观感）：落地草屑——向两侧扬起的绿色草粒
+    for (var gi = 0; gi < 8; gi++) {
+      var gdir = gi < 4 ? -1 : 1;
+      this.particles.push({ x: m.x + gdir * 6, y: plat.y - 2,
+        vx: gdir * (50 + Math.random() * 90), vy: -(30 + Math.random() * 70),
+        life: 0.4 + Math.random() * 0.3, color: plat.type === 'ice' ? '#bdf1ff' : '#69db7c', r: 2 });
+    }
     // 完美着陆：落在平台正中央 -> 连击加分（蓄力精准度的回报，不新增按键）
     var center = plat.x + plat.w / 2;
     if (plat.type !== 'start' && Math.abs(m.x - center) < plat.w * CFG.PERFECT_RATIO) {
@@ -906,7 +916,7 @@
     m.y = CFG.WATER_Y - 8;
     m.vx = 0; m.vy = 0;
     m.grounded = false;
-    m.wetT = CFG.PATIENCE;
+    m.wetT = 1;   // r21：恒湿标记（不倒计时），被救时清 0
     m.wetRescueDelay = CFG.RESCUE_DELAY;
     this.combo = 0;
     m.squash = 0.7;
@@ -1176,28 +1186,14 @@
    *  - 还没走到任何一个检查点就双落 -> 直接结算（开局不给兜底）
    *  - 同一检查点连摔 3 次 -> 判定卡关，结算（防止被地形焊死）
    */
-  /** 单只湿猴耐心耗尽：救援失败，按连掉处理（回检查点或结算），不再无声下坠 */
-  Game.prototype._onWetExpired = function (m) {
-    if (this.state !== 'playing') return;
-    this._float(m.x, CFG.WATER_Y - 64, '没抓稳…', '#e8590c');
-    // r20：落水/平台下永不结束游戏——耗尽一律回检查点（没打过旗回起始平台）
-    var cp = this.checkpoints[this._lastCPIdx];
-    if (cp && cp.passed) { this._respawnAt(cp); return; }
-    var sp = this.platforms[0];
-    this._respawnAt({ x: sp ? sp.x + sp.w / 2 : 0 });
-  };
-
   Game.prototype._onBothWet = function () {
     if (this.state !== 'playing') return;
-    // r20：双落水同样永不结算，一律回检查点/起始平台
-    var cp = this.checkpoints[this._lastCPIdx];
-    if (cp && cp.passed) { this._respawnAt(cp); return; }
-    var sp = this.platforms[0];
-    this._respawnAt({ x: sp ? sp.x + sp.w / 2 : 0 });
+    // r21（视频玩法）：两只同时掉落才重打本关——回本关起点平台，关卡不倒退，永不结算
+    this._respawnAt({ x: this._levelStartX }, '双双落水！重打第 ' + this.level + ' 关');
   };
 
   /** 两只猴 + 绳子整体复位到检查点；距离/分数/金香蕉都保留（分是"到过的高度"） */
-  Game.prototype._respawnAt = function (cp) {
+  Game.prototype._respawnAt = function (cp, label) {
     var ms = this.monkeys;
     var y = this._surfaceNear(cp.x, CFG.GROUND_Y);
     var p = this.platformAt(cp.x);
@@ -1226,7 +1222,7 @@
     this._lastSwitch = this.time;
     this.camX = (ms[0].x + ms[1].x) / 2 - CFG.W / 2;   // 相机直接切过去，不从原地滑
     this.shake = 0.5;
-    this._float(cp.x, y - 124, '掉回检查点（第 ' + this.falls + ' 次）', '#e8590c');
+    this._float(cp.x, y - 124, label || ('掉回检查点（第 ' + this.falls + ' 次）'), '#e8590c');
     this._burst(cp.x, y - 30, 12, '#ffa94d');
     this.emit('respawn', { falls: this.falls, cp: cp.x });
   };
@@ -1531,8 +1527,34 @@
     if (snowAmt > 0) this._snow(g, t, snowAmt);
 
     // ---------- 世界 ----------
+    // r21（视频玩法）：画面自动缩放——两猴水平距离超过屏宽时，镜头拉远适配；
+    // zoom 恢复 1 后无缝回到常规 camX 跟随
+    var mA = g.monkeys[0], mB = g.monkeys[1];
+    if (mA && mB) {
+      var needW = Math.abs(mA.x - mB.x) + 260;          // 两猴间距 + 两侧余量
+      var zoomT = Math.max(0.55, Math.min(1, CFG.W / Math.max(needW, 460)));
+      if (this._zoom === undefined) this._zoom = 1;
+      this._zoom += (zoomT - this._zoom) * Math.min(1, (dt || 0.016) * 4);
+      if (this._zoom < 0.985) {
+        var fcx = (mA.x + mB.x) / 2, fcy = Math.max(180, Math.min(500, (mA.y + mB.y) / 2));
+        if (this._czx === undefined) { this._czx = fcx; this._czy = fcy; }
+        this._czx += (fcx - this._czx) * Math.min(1, (dt || 0.016) * 3);
+        this._czy += (fcy - this._czy) * Math.min(1, (dt || 0.016) * 3);
+        this._viewL = this._czx - CFG.W / (2 * this._zoom) - 80;
+        this._viewR = this._czx + CFG.W / (2 * this._zoom) + 80;
+      } else {
+        this._zoom = 1; this._czx = undefined; this._czy = undefined;
+        this._viewL = g.camX - 80; this._viewR = g.camX + CFG.W + 80;
+      }
+    }
     ctx.save();
-    ctx.translate(-g.camX + shakeX, shakeY);
+    if (this._zoom !== undefined && this._zoom < 0.985) {
+      ctx.translate(CFG.W / 2, CFG.H / 2);
+      ctx.scale(this._zoom, this._zoom);
+      ctx.translate(-this._czx + shakeX / this._zoom, shakeY / this._zoom);
+    } else {
+      ctx.translate(-g.camX + shakeX, shakeY);
+    }
 
     this._water(g, t);
     this._platforms(g, t);
@@ -1629,7 +1651,8 @@
 
   Renderer.prototype._platforms = function (g, t) {
     var ctx = this.ctx;
-    var left = g.camX - 80, right = g.camX + CFG.W + 80;
+    var left = this._viewL !== undefined ? this._viewL : g.camX - 80,
+        right = this._viewR !== undefined ? this._viewR : g.camX + CFG.W + 80;
     for (var i = 0; i < g.platforms.length; i++) {
       var p = g.platforms[i];
       if (p.x + p.w < left || p.x > right) continue;
@@ -1761,7 +1784,8 @@
   // 柱子半透明叠层：落水猴荡过柱子前面时被柱色罩住，"在柱子间飘荡"的层次感
   Renderer.prototype._pillarOverlay = function (g) {
     var ctx = this.ctx;
-    var left = g.camX - 80, right = g.camX + CFG.W + 80;
+    var left = this._viewL !== undefined ? this._viewL : g.camX - 80,
+        right = this._viewR !== undefined ? this._viewR : g.camX + CFG.W + 80;
     var bottom = CFG.WATER_Y + 30;
     // 有没有湿猴需要罩色？没有就完全跳过，省一层绘制
     var wet = g.monkeys && g.monkeys.filter(function (m) { return m.wetT > 0 && m.wetT < 100; });
@@ -1892,7 +1916,8 @@
 
   Renderer.prototype._decals = function (g, t) {
     var ctx = this.ctx;
-    var left = g.camX - 80, right = g.camX + CFG.W + 80;
+    var left = this._viewL !== undefined ? this._viewL : g.camX - 80,
+        right = this._viewR !== undefined ? this._viewR : g.camX + CFG.W + 80;
     // 检查点旗
     for (var q = 0; q < g.checkpoints.length; q++) {
       var cp = g.checkpoints[q];
@@ -2215,10 +2240,11 @@
 
   Renderer.prototype._progress = function (g) {
     var ctx = this.ctx;
-    var M = CFG.MILESTONE || 500;
+    // r21：关卡制进度条——黄条 = 本关推进度（起点平台 -> 过关旗）
     var dist = g.distance || 0;
-    var lv = Math.floor(dist / M) + 1;
-    var frac = (dist % M) / M;
+    var lv = g.level || 1;
+    var span = CFG.CP_SPACING || 2200;
+    var frac = Math.max(0, Math.min(1, (g.maxX - (g._levelStartX !== undefined ? g._levelStartX : -25)) / span));
     var bw = 150, bh = 7, bx = (CFG.W - bw) / 2, by = 78;   // r15 实机：DOM HUD 约占画布顶部 70px，下移避让
     ctx.save();
     ctx.globalAlpha = 0.88;
@@ -2242,7 +2268,7 @@
     ctx.strokeStyle = 'rgba(50,32,14,0.85)';   // r16c: 描边再实一点（云上要清晰）
     ctx.strokeText('第 ' + lv + ' 关 · ' + dist + 'm', CFG.W / 2, by + bh + 17);
     ctx.fillStyle = '#ffffff';
-    ctx.fillText('第 ' + lv + ' 关 · ' + dist + 'm', CFG.W / 2, by + bh + 17);
+    ctx.fillText('第 ' + lv + ' 关', CFG.W / 2, by + bh + 17);
     ctx.restore();
   };
 
@@ -4741,7 +4767,7 @@ module.exports = {
       case 'switch': sfx.play('switch'); break;
       case 'perfect': sfx.play('perfect'); break;
       case 'gold': sfx.play('gold'); toast('金香蕉 +50！', 1200); break;
-      case 'checkpoint': sfx.play('checkpoint'); toast('到达存档点！掉下去也能从这儿接着来', 1500); break;
+      case 'checkpoint': sfx.play('checkpoint'); toast('第 ' + ((d && d.level) || 1) + ' 关完成！+100', 1600); break;
       case 'respawn': sfx.play('respawn'); break;
       case 'spring': sfx.play('spring'); break;
       case 'gameover': onGameOver(d); break;
