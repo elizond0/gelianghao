@@ -1,6 +1,6 @@
 /* eslint-disable */
 /* 哥俩好 · 网页端单文件打包产物 —— 由 scripts/build-web-bundle.js 自动生成，请勿手改 */
-/* 生成时间：2026-10-29T14:42:29.769Z */
+/* 生成时间：2026-10-29T17:17:35.038Z */
 (function () {
   'use strict';
   var __mods = {};
@@ -409,7 +409,9 @@
       this.platforms.push(p);
       last = p;
     }
-    var cut = this.camX - 700;
+    // r25：本关（重打起点起）的地形必须保留——双落水会把猴传回 _levelStartX，
+    // 若那里平台已被清理，猴会悬空挂绳再落水，再传回同一悬空点，死循环（线上实测）
+    var cut = Math.min(this.camX - 700, this._levelStartX - 200);
     if (this.platforms.length > 10) {
       this.platforms = this.platforms.filter(function (p) { return p.x + p.w > cut; });
       this.obstacles = this.obstacles.filter(function (o) { return o.x > cut; });
