@@ -1,0 +1,49 @@
+<view class="page">
+  <canvas
+    type="2d"
+    id="cv"
+    class="cv"
+    bindtouchstart="onTouchStart"
+    bindtouchend="onTouchEnd"
+    bindtouchcancel="onTouchCancel"
+  ></canvas>
+
+  <!-- 游戏中退出：放在左上角，避开 HUD 和手指操作区 -->
+  <view class="quit" wx:if="{{!overShow}}" bindtap="onQuit">
+    <view class="quit-ico">‹</view>
+    <text>退出</text>
+  </view>
+
+  <!-- HUD -->
+  <view class="hud">
+    <view class="pill"><text class="k">距离</text><text class="v">{{dist}}</text><text class="u">m</text></view>
+    <view class="pill"><text class="k">分数</text><text class="v">{{score}}</text></view>
+    <view class="pill coin"><text class="v">{{coins}}</text></view>
+    <view class="pill fall"><text class="k">掉落</text><text class="v">{{falls}}</text></view>
+    <view class="pill combo {{combo >= 2 ? 'show' : ''}} {{comboPop ? 'pop' : ''}}"><text class="k">连击</text><text class="v">x{{combo}}</text></view>
+    <view class="pill turn" wx:if="{{netMode}}"><text class="k">轮到</text><text class="v">{{turnName}}</text></view>
+  </view>
+
+  <view class="toast {{toastShow ? 'show' : ''}}">{{toast}}</view>
+
+  <!-- 结算 -->
+  <view class="over {{overShow ? 'show' : ''}}">
+    <view class="card">
+      <view class="ov-title">{{overTitle}}</view>
+      <view class="ov-reason">{{overReason}}</view>
+      <view class="stats">
+        <view class="stat"><view class="sv">{{overScore}}</view><view class="sk">分数</view></view>
+        <view class="stat"><view class="sv">{{overDist}}<text class="su">m</text></view><view class="sk">距离</view></view>
+        <view class="stat"><view class="sv">{{overCoin}}</view><view class="sk">金币</view></view>
+        <view class="stat"><view class="sv">{{overRescue}}</view><view class="sk">救援</view></view>
+        <view class="stat"><view class="sv">{{overPerfect}}</view><view class="sk">完美着陆</view></view>
+        <view class="stat"><view class="sv">{{overGold}}</view><view class="sk">金香蕉</view></view>
+        <view class="stat"><view class="sv">{{overCombo}}</view><view class="sk">最高连击</view></view>
+        <view class="stat"><view class="sv">{{overFalls}}</view><view class="sk">掉落回档</view></view>
+      </view>
+      <view class="best">用时 {{overTime}} · 最好成绩 {{best}} 分</view>
+      <view class="btn primary" bindtap="onAgain">再来一局</view>
+      <view class="btn ghost" bindtap="onHome">回首页</view>
+    </view>
+  </view>
+</view>

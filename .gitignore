@@ -1,0 +1,19 @@
+# 构建产物：从源码生成，不进版本库
+dist/
+web/app.bundle.js
+miniprogram/shared/
+gelianghao-ghpages.zip
+
+# 依赖
+node_modules/
+
+# 部署凭据 / 本地配置（绝不提交）
+.gh-token
+.env
+.env.*
+.netlify/
+
+# 系统杂物
+.DS_Store
+Thumbs.db
+*.log

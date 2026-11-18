@@ -1,0 +1,55 @@
+<view class="page">
+  <view class="topbar">
+    <view class="back" bindtap="onBack">‹</view>
+    <view class="caption">房间</view>
+  </view>
+
+  <!-- 网络状态条：断线 / 重连 / 房间失效都在这里说清楚，绝不静默卡住 -->
+  <view class="netbar {{netbarKind}}" wx:if="{{netbar}}">{{netbar}}</view>
+
+  <view class="code-box">
+    <view class="label">房间号</view>
+    <view class="code">{{code}}</view>
+    <view class="hint">把这个 4 位数发给好友，让他从「输入房号进房」进来</view>
+    <view class="copy-row">
+      <view class="copy" bindtap="onCopy">复制房号</view>
+      <!-- 邀请入口：分享给好友；同时保留手输房号，不强制分享 -->
+      <button class="copy share" open-type="share">邀请好友</button>
+    </view>
+  </view>
+
+  <view class="seats">
+    <view class="seat {{seats[0].ready ? 'ready' : ''}}">
+      <view class="badges">
+        <view class="tag host" wx:if="{{seats[0].isHost}}">房主</view>
+        <view class="tag me" wx:if="{{seats[0].me}}">我</view>
+      </view>
+      <view class="avatar a0">
+        <view class="ear l"></view><view class="ear r"></view>
+        <view class="head"><view class="face"><view class="eye l"></view><view class="eye r"></view></view></view>
+      </view>
+      <view class="nm">{{seats[0].name || '空位'}}</view>
+      <view class="st {{seats[0].ready ? 'ok' : ''}}">{{seats[0].status}}</view>
+    </view>
+
+    <view class="vs">VS</view>
+
+    <view class="seat {{seats[1].ready ? 'ready' : ''}}">
+      <view class="badges">
+        <view class="tag host" wx:if="{{seats[1].isHost}}">房主</view>
+        <view class="tag me" wx:if="{{seats[1].me}}">我</view>
+      </view>
+      <view class="avatar a1">
+        <view class="ear l"></view><view class="ear r"></view>
+        <view class="head"><view class="face"><view class="eye l"></view><view class="eye r"></view></view></view>
+      </view>
+      <view class="nm">{{seats[1].name || '空位'}}</view>
+      <view class="st {{seats[1].ready ? 'ok' : ''}}">{{seats[1].status}}</view>
+    </view>
+  </view>
+
+  <view class="footer">
+    <view class="btn primary {{btnDisabled ? 'dis' : ''}}" bindtap="onReady">{{btnText}}</view>
+    <view class="tip">{{tip}}</view>
+  </view>
+</view>

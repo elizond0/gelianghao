@@ -1,0 +1,18 @@
+{
+  "pages": [
+    "pages/index/index",
+    "pages/room/room",
+    "pages/game/game"
+  ],
+  "window": {
+    "backgroundColor": "#bfe7ff",
+    "backgroundTextStyle": "light",
+    "navigationBarBackgroundColor": "#bfe7ff",
+    "navigationBarTitleText": "哥俩好",
+    "navigationBarTextStyle": "black",
+    "navigationStyle": "custom"
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json",
+  "lazyCodeLoading": "requiredComponents"
+}

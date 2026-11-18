@@ -1,0 +1,217 @@
+.page {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: linear-gradient(180deg, #bfe7ff 0%, #d8f0ff 45%, #ffeccf 100%);
+}
+
+/* 云 */
+.sky { position: absolute; left: 0; top: 0; width: 100%; height: 55%; }
+.cloud {
+  position: absolute;
+  background: #fff;
+  border-radius: 50%;
+  opacity: 0.85;
+}
+.cloud::before, .cloud::after {
+  content: '';
+  position: absolute;
+  background: #fff;
+  border-radius: 50%;
+}
+.c1 { width: 110rpx; height: 110rpx; left: 12%; top: 14%; }
+.c1::before { width: 150rpx; height: 150rpx; left: 50rpx; top: -40rpx; }
+.c1::after { width: 100rpx; height: 100rpx; left: 120rpx; top: 10rpx; }
+.c2 { width: 80rpx; height: 80rpx; right: 16%; top: 22%; }
+.c2::before { width: 120rpx; height: 120rpx; left: -50rpx; top: 10rpx; }
+.c2::after { width: 90rpx; height: 90rpx; left: 50rpx; top: -20rpx; }
+.c3 { width: 70rpx; height: 70rpx; left: 62%; top: 8%; opacity: 0.6; }
+
+/* 山 */
+.hills { position: absolute; left: 0; bottom: 0; width: 100%; height: 46%; }
+.hill {
+  position: absolute;
+  bottom: 0;
+  border-radius: 50% 50% 0 0;
+}
+.h1 { width: 620rpx; height: 380rpx; left: -160rpx; background: #a7d8c3; }
+.h2 { width: 520rpx; height: 300rpx; right: -120rpx; background: #b6e0cd; }
+.h3 { width: 460rpx; height: 220rpx; left: 32%; background: #7cc7a5; }
+
+.content {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 16vh;
+}
+
+/* 两只猴 logo */
+.logo { position: relative; width: 360rpx; height: 220rpx; }
+.monkey { position: absolute; width: 150rpx; height: 150rpx; }
+.m1 { left: 20rpx; top: 30rpx; transform: rotate(-8deg); }
+.m2 { right: 20rpx; top: 0; transform: rotate(8deg); }
+.monkey .ear {
+  position: absolute; width: 52rpx; height: 52rpx; border-radius: 50%;
+  background: #c68642; top: 18rpx;
+}
+.monkey .ear.l { left: -14rpx; }
+.monkey .ear.r { right: -14rpx; }
+.monkey .head {
+  position: absolute; left: 15rpx; top: 6rpx; width: 120rpx; height: 120rpx;
+  border-radius: 50%; background: #c68642;
+}
+.monkey .face {
+  position: absolute; left: 22rpx; top: 30rpx; width: 76rpx; height: 66rpx;
+  border-radius: 50%; background: #f3d9b1;
+}
+.monkey .eye {
+  position: absolute; width: 14rpx; height: 16rpx; border-radius: 50%;
+  background: #3b2a1e; top: 24rpx;
+}
+.monkey .eye.l { left: 18rpx; }
+.monkey .eye.r { right: 18rpx; }
+
+.title {
+  margin-top: 10rpx;
+  font-size: 88rpx;
+  font-weight: 800;
+  color: #2f5d4a;
+  letter-spacing: 8rpx;
+  text-shadow: 0 6rpx 0 #ffffff90;
+}
+.subtitle {
+  margin-top: 12rpx;
+  font-size: 26rpx;
+  color: #4a7a66;
+}
+
+.buttons {
+  margin-top: 80rpx;
+  width: 560rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 24rpx;
+}
+.btn {
+  height: 104rpx;
+  line-height: 104rpx;
+  text-align: center;
+  border-radius: 52rpx;
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #2f5d4a;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 8rpx 0 rgba(47, 93, 74, 0.15);
+}
+.btn:active { transform: translateY(4rpx); box-shadow: 0 4rpx 0 rgba(47,93,74,0.15); }
+.btn.primary {
+  background: #ffb03a;
+  color: #5a3400;
+  box-shadow: 0 8rpx 0 #d98a1f;
+}
+.btn.primary:active { box-shadow: 0 4rpx 0 #d98a1f; }
+.btn.ghost {
+  background: transparent;
+  box-shadow: none;
+  color: #4a7a66;
+  font-weight: 400;
+  font-size: 28rpx;
+}
+
+/* 输房号这一行：输入框占满，按钮定宽 */
+.join-row {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+}
+.join-input {
+  flex: 1;
+  height: 104rpx;
+  padding: 0 40rpx;
+  box-sizing: border-box;
+  border-radius: 52rpx;
+  font-size: 30rpx;
+  color: #2f5d4a;
+  text-align: center;
+  letter-spacing: 8rpx;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: inset 0 2rpx 8rpx rgba(47, 93, 74, 0.12);
+}
+.join-input-placeholder { color: #9ab8ab; letter-spacing: 0; }
+.btn.small {
+  width: 200rpx;
+  flex: none;
+  font-size: 28rpx;
+}
+.btn.dis {
+  opacity: 0.55;
+}
+
+.best {
+  position: absolute;
+  bottom: 60rpx;
+  font-size: 24rpx;
+  color: #6b9a86;
+}
+
+/* 说明弹层 */
+.sheet {
+  position: fixed;
+  left: 0; top: 0; right: 0; bottom: 0;
+  background: rgba(20, 40, 32, 0.45);
+  display: none;
+  align-items: flex-end;
+  z-index: 10;
+}
+.sheet.show { display: flex; }
+.sheet-body {
+  width: 100%;
+  background: #fff;
+  border-radius: 40rpx 40rpx 0 0;
+  padding: 48rpx 44rpx 60rpx;
+  box-sizing: border-box;
+}
+.sheet-title { font-size: 38rpx; font-weight: 700; color: #2f5d4a; margin-bottom: 32rpx; }
+.rule {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: 26rpx;
+  font-size: 27rpx;
+  line-height: 1.7;
+  color: #3f5a4f;
+}
+.rule .n {
+  flex: 0 0 44rpx;
+  height: 44rpx;
+  line-height: 44rpx;
+  text-align: center;
+  border-radius: 22rpx;
+  background: #e8f5ee;
+  color: #3f8a68;
+  font-weight: 700;
+  font-size: 24rpx;
+  margin-right: 18rpx;
+}
+.hl { color: #e0700f; font-weight: 700; }
+.sheet-close {
+  margin-top: 36rpx;
+  height: 96rpx;
+  line-height: 96rpx;
+  text-align: center;
+  border-radius: 48rpx;
+  background: #2f8a68;
+  color: #fff;
+  font-size: 30rpx;
+  font-weight: 600;
+}
+
+.ver {
+  font-size: 20rpx;
+  color: #b7a893;
+  margin-top: 8rpx;
+  text-align: center;
+  letter-spacing: 1rpx;
+}

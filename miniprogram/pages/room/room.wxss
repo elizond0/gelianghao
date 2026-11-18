@@ -1,0 +1,227 @@
+.page {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  box-sizing: border-box;
+  background: linear-gradient(180deg, #bfe7ff 0%, #e8f6ff 60%, #ffeccf 100%);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.topbar {
+  position: relative;
+  height: 160rpx;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 12rpx;
+}
+.back {
+  position: absolute;
+  left: 24rpx;
+  bottom: 0;
+  width: 72rpx;
+  height: 72rpx;
+  line-height: 64rpx;
+  text-align: center;
+  font-size: 56rpx;
+  color: #2f5d4a;
+}
+.caption { font-size: 32rpx; font-weight: 600; color: #2f5d4a; }
+
+.code-box {
+  margin: 40rpx auto 0;
+  width: 600rpx;
+  background: #fff;
+  border-radius: 32rpx;
+  padding: 36rpx 0 30rpx;
+  box-sizing: border-box;
+  text-align: center;
+  box-shadow: 0 10rpx 30rpx rgba(47, 93, 74, 0.10);
+}
+.label { font-size: 24rpx; color: #7ea595; letter-spacing: 4rpx; }
+.code {
+  font-size: 96rpx;
+  font-weight: 800;
+  color: #2f8a68;
+  letter-spacing: 16rpx;
+  line-height: 1.25;
+  padding-left: 16rpx;
+}
+.hint {
+  font-size: 23rpx;
+  color: #8aa79a;
+  padding: 0 40rpx;
+  line-height: 1.6;
+}
+.copy {
+  margin: 22rpx auto 0;
+  width: 220rpx;
+  height: 68rpx;
+  line-height: 68rpx;
+  border-radius: 34rpx;
+  background: #eef8f2;
+  color: #2f8a68;
+  font-size: 26rpx;
+}
+
+.seats {
+  position: relative;
+  margin: 60rpx auto 0;
+  width: 620rpx;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.seat {
+  position: relative;
+  width: 250rpx;
+  padding: 28rpx 0 22rpx;
+  border-radius: 28rpx;
+  background: rgba(255, 255, 255, 0.78);
+  text-align: center;
+  border: 4rpx solid transparent;
+}
+.seat.ready { border-color: #59c48b; background: #ffffff; }
+.badges {
+  position: absolute;
+  left: 0; top: -18rpx;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  gap: 8rpx;
+}
+.tag {
+  padding: 2rpx 14rpx;
+  border-radius: 16rpx;
+  font-size: 20rpx;
+  line-height: 30rpx;
+  background: #ffb03a;
+  color: #5a3400;
+}
+.tag.host { background: #2f8a68; color: #fff; }
+.tag.me { background: #ff7043; color: #fff; }
+
+.avatar {
+  position: relative;
+  width: 130rpx;
+  height: 130rpx;
+  margin: 6rpx auto 12rpx;
+}
+.avatar .ear {
+  position: absolute;
+  width: 46rpx; height: 46rpx;
+  border-radius: 50%;
+  top: 16rpx;
+}
+.avatar .ear.l { left: -12rpx; }
+.avatar .ear.r { right: -12rpx; }
+.avatar .head {
+  position: absolute;
+  left: 13rpx; top: 6rpx;
+  width: 104rpx; height: 104rpx;
+  border-radius: 50%;
+}
+.avatar .face {
+  position: absolute;
+  left: 19rpx; top: 26rpx;
+  width: 66rpx; height: 58rpx;
+  border-radius: 50%;
+  background: #f3d9b1;
+}
+.avatar .eye {
+  position: absolute;
+  width: 12rpx; height: 14rpx;
+  border-radius: 50%;
+  background: #3b2a1e;
+  top: 20rpx;
+}
+.avatar .eye.l { left: 15rpx; }
+.avatar .eye.r { right: 15rpx; }
+
+.a0 .ear, .a0 .head { background: #c68642; }
+.a1 .ear, .a1 .head { background: #d19a5e; }
+
+.nm { font-size: 28rpx; color: #2f5d4a; font-weight: 600; }
+.st { font-size: 22rpx; color: #8aa79a; margin-top: 6rpx; }
+.seat.ready .st { color: #3f9e6f; }
+
+.vs {
+  font-size: 26rpx;
+  font-weight: 800;
+  color: #b8d6c8;
+}
+
+/* 网络状态条：贴在标题栏下方，不遮内容 */
+.netbar {
+  margin: 0 40rpx 12rpx;
+  padding: 16rpx 24rpx;
+  border-radius: 16rpx;
+  font-size: 24rpx;
+  line-height: 1.4;
+  text-align: center;
+  color: #8a5a00;
+  background: #fff3d6;
+  border: 2rpx solid #ffd98a;
+}
+.netbar.ok {
+  color: #2f6d4f;
+  background: #e6f7ec;
+  border-color: #a9dcbc;
+}
+
+/* 复制 / 邀请 并排 */
+.copy-row {
+  margin-top: 20rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20rpx;
+}
+.copy-row .copy {
+  margin: 0;
+}
+.copy.share {
+  padding: 0 32rpx;
+  height: 64rpx;
+  line-height: 64rpx;
+  font-size: 26rpx;
+  border-radius: 32rpx;
+  background: #ffb03a;
+  color: #5a3400;
+  font-weight: 600;
+  border: none;
+}
+.copy.share::after { border: none; }
+
+/* 座位状态：已准备用绿色 */
+.st.ok { color: #2f8a5b; font-weight: 600; }
+
+.footer {
+  margin-top: auto;
+  padding: 0 60rpx 70rpx;
+}
+.btn {
+  height: 104rpx;
+  line-height: 104rpx;
+  text-align: center;
+  border-radius: 52rpx;
+  background: #ffb03a;
+  color: #5a3400;
+  font-size: 32rpx;
+  font-weight: 700;
+  box-shadow: 0 8rpx 0 #d98a1f;
+}
+.btn.dis {
+  background: #cfdcd6;
+  color: #8fa8a0;
+  box-shadow: 0 8rpx 0 #b8c8c1;
+}
+.tip {
+  margin-top: 24rpx;
+  text-align: center;
+  font-size: 23rpx;
+  color: #8aa79a;
+  min-height: 32rpx;
+}

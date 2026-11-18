@@ -1,0 +1,63 @@
+<view class="page">
+  <view class="sky">
+    <view class="cloud c1"></view>
+    <view class="cloud c2"></view>
+    <view class="cloud c3"></view>
+  </view>
+  <view class="hills">
+    <view class="hill h1"></view>
+    <view class="hill h2"></view>
+    <view class="hill h3"></view>
+  </view>
+
+  <view class="content">
+    <view class="logo">
+      <view class="monkey m1">
+        <view class="ear l"></view><view class="ear r"></view>
+        <view class="head"><view class="face"><view class="eye l"></view><view class="eye r"></view></view></view>
+      </view>
+      <view class="monkey m2">
+        <view class="ear l"></view><view class="ear r"></view>
+        <view class="head"><view class="face"><view class="eye l"></view><view class="eye r"></view></view></view>
+      </view>
+    </view>
+
+    <view class="title">哥俩好</view>
+    <view class="subtitle">一根绳子上的两只猴 · 轮流接力往前跳</view>
+
+    <view class="buttons">
+      <view class="btn primary" bindtap="onSolo">一个人练手</view>
+      <view class="btn" bindtap="onCreate">开个房间，拉好友</view>
+
+      <!-- 输房号进房：分享进来的房号自动填好，直接点「进房」即可 -->
+      <view class="join-row">
+        <input
+          class="join-input"
+          type="number"
+          maxlength="4"
+          value="{{code}}"
+          placeholder="4 位房号"
+          bindinput="onCodeInput"
+        />
+        <view class="btn small {{code ? '' : 'dis'}}" bindtap="onJoin">{{code ? '进房' : '输入房号'}}</view>
+      </view>
+
+      <view class="btn ghost" bindtap="onHow">怎么玩</view>
+    </view>
+
+    <view class="best">最好成绩 {{best}} 分</view>
+    <view class="ver">{{version}}</view>
+  </view>
+
+  <!-- 玩法说明 -->
+  <view class="sheet {{showHow ? 'show' : ''}}" catchtap="closeHow">
+    <view class="sheet-body" catchtap="noop">
+      <view class="sheet-title">怎么玩</view>
+      <view class="rule"><text class="n">1</text><text>两只猴子被一根弹性绳子拴在一起，一前一后。</text></view>
+      <view class="rule"><text class="n">2</text><text><text class="hl">按下立刻起跳，按住往上飞，松手快落</text>。按多久飞多远。</text></view>
+      <view class="rule"><text class="n">3</text><text>一只掉进坑里不会马上输：另一只跳过坑、稳稳站在岸上，就能把它「钓」上来。</text></view>
+      <view class="rule"><text class="n">4</text><text>两只同时落水才结束。<text class="hl">两人联机时，轮流控制各自的猴子。</text></text></view>
+      <view class="sheet-close" bindtap="closeHow">知道了</view>
+    </view>
+  </view>
+</view>

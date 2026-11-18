@@ -1,0 +1,13 @@
+{
+  "name": "gelianghao-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "哥俩好小游戏 - 静态站点 + 好友联机房间服务",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "gelianghao",
+  "version": "0.3.0",
+  "private": true,
+  "description": "哥俩好：一套代码同时跑网页版和微信小程序",
+  "scripts": {
+    "start": "node scripts/build-web-bundle.js && node server/server.js",
+    "dev": "node scripts/sync-shared.js --watch",
+    "sync": "node scripts/sync-shared.js",
+    "test:mp": "node tests/mp-smoke.js",
+    "test:lobby": "node tests/lobby-state.js",
+    "build": "node scripts/sync-shared.js && node scripts/build-web-bundle.js",
+    "build:bundle": "node scripts/build-web-bundle.js",
+    "test:web": "node scripts/build-web-bundle.js"
+  }
+}
