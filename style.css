@@ -226,6 +226,11 @@ input, textarea { user-select: text; -webkit-user-select: text; touch-action: au
 }
 .btn:hover { filter: brightness(1.03); }
 .btn:active { transform: translateY(3px); box-shadow: 0 1px 0 #e8d9c5; }
+.btn svg, .rotate-ico svg {
+  width: 19px; height: 19px; margin-right: 4px; vertical-align: -3px;
+  fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+}
+.rotate-ico svg { width: 40px; height: 40px; margin: 0; vertical-align: middle; }
 .btn.primary {
   background: linear-gradient(180deg, #ffb066 0%, var(--orange) 55%, #f57a26 100%);
   color: #fff;
