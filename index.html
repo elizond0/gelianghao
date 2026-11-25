@@ -47,7 +47,7 @@
 
   <!-- 竖屏提示（只在横屏手机时出现） -->
   <div class="rotate-tip" id="rotateTip">
-    <div class="rotate-ico">📱</div>
+    <div class="rotate-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2"/><path d="M10.5 18.5h3"/></svg></div>
     <p>把手机竖过来玩更顺手</p>
   </div>
 
@@ -79,11 +79,11 @@
       <p class="sub">一根绳，两只猴，谁也离不开谁</p>
     </div>
     <div class="btns">
-      <button class="btn primary" id="btnSolo">🐒 单机开跳</button>
-      <button class="btn daily" id="btnDaily">🏔️ 每日挑战</button>
-      <button class="btn" id="btnRoom">🤝 好友联机</button>
-      <button class="btn ghost" id="btnHow">❓ 怎么玩</button>
-      <button class="btn ghost" id="btnSettings">⚙️ 设置</button>
+      <button class="btn primary" id="btnSolo"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="8.5" cy="10" r="1.5" fill="currentColor" stroke="none"/><circle cx="15.5" cy="10" r="1.5" fill="currentColor" stroke="none"/><path d="M8.5 14.5c2 2 5 2 7 0"/></svg>单机开跳</button>
+      <button class="btn daily" id="btnDaily"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 19 9.5 8l3.5 5.5L16 10l5 9z"/><path d="M7 19h12"/></svg>每日挑战</button>
+      <button class="btn" id="btnRoom"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="9" r="3"/><circle cx="17" cy="10" r="2.5"/><path d="M3 19c.6-3 2.4-4.5 5-4.5s4.4 1.5 5 4.5M14.5 18c.4-2 1.4-3 3-3s2.6 1 3 3"/></svg>好友联机</button>
+      <button class="btn ghost" id="btnHow"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.3 9.2a2.7 2.7 0 1 1 4.3 2.2c-1.1.8-1.6 1.3-1.6 2.5"/><circle cx="12" cy="17" r=".8" fill="currentColor" stroke="none"/></svg>怎么玩</button>
+      <button class="btn ghost" id="btnSettings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6"/></svg>设置</button>
     </div>
     <p class="best">历史最高 <b id="bestScore">0</b> 分</p>
     <p class="ver" id="verText"></p>
@@ -131,7 +131,7 @@
     </div>
     <p class="best-line">用时 <b id="ovTime">0:00</b> · 历史最高 <b id="ovBest">0</b> 分</p>
     <div class="btns">
-      <button class="btn primary" id="btnAgain">🔁 再来一局</button>
+      <button class="btn primary" id="btnAgain"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 6.2"/><path d="M20 4v7h-7"/></svg>再来一局</button>
       <button class="btn ghost" id="btnHome">回首页</button>
     </div>
   </section>
@@ -141,11 +141,11 @@
     <h2>设置</h2>
     <div class="set-list">
       <div class="set-row">
-        <div class="set-info"><b>🔊 音效</b><span>跳跃、得分、弹蘑菇这些音效</span></div>
+        <div class="set-info"><b><svg viewBox="0 0 24 24" aria-hidden="true" style="width:16px;height:16px;vertical-align:-2px;margin-right:4px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16 9c1.4 1.6 1.4 4.4 0 6"/></svg>音效</b><span>跳跃、得分、弹蘑菇这些音效</span></div>
         <button class="toggle on" id="tglSfx" aria-label="音效开关"><i></i></button>
       </div>
       <div class="set-row">
-        <div class="set-info"><b>📳 震动</b><span>落水、得救时轻震一下（需设备支持）</span></div>
+        <div class="set-info"><b><svg viewBox="0 0 24 24" aria-hidden="true" style="width:16px;height:16px;vertical-align:-2px;margin-right:4px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round"><rect x="7" y="3" width="10" height="18" rx="2"/><path d="M10 6.5h4M10 17.5h4"/></svg>震动</b><span>落水、得救时轻震一下（需设备支持）</span></div>
         <button class="toggle on" id="tglVib" aria-label="震动开关"><i></i></button>
       </div>
     </div>
